@@ -11,9 +11,11 @@ import re
 import threading
 import requests
 import subprocess
+import webbrowser
 
 # --- Global Dictionaries ---
 STRINGS = {} # Global dictionary to hold loaded strings.
+sent_notifications = set() # Global set to track sent notifications to avoid duplicates
 
 # --- Translation & Config Functions ---
 def load_config():
@@ -22,7 +24,9 @@ def load_config():
     default_config = {
         "API_TOKEN": "PASTE_YOUR_BEARER_TOKEN_HERE",
         "USER_ID": 3006,
-        "LANGUAGE": "fi"
+        "LANGUAGE": "fi",
+        "NOTIFICATION_WINDOW_TITLE": "TODAYTASKS",
+        "BROWSER_COMMAND": ["/usr/bin/google-chrome", "--profile-directory=Profile 1", "--new-window"]
     }
     try:
         with open(config_path, 'r', encoding='utf-8') as f:
@@ -238,7 +242,7 @@ def read_jira_box_content(max_lines=10):
         return []
 
 
-def display_dedicated_notes_view(stdscr, data, command_buffer, entity_for_notes, show_help_footer):
+def display_dedicated_notes_view(stdscr, data, command_buffer, entity_for_notes, show_help_footer, selected_note_idx):
     height, width = stdscr.getmaxyx()
     now_time_str = datetime.now().strftime("%H:%M:%S")
     stdscr.clear()
@@ -275,7 +279,13 @@ def display_dedicated_notes_view(stdscr, data, command_buffer, entity_for_notes,
     if len(title[:width-1]) > 0 : stdscr.addstr(row, 0, "-" * len(title[:width-1]))
     row +=1
 
-    help_lines_notes_view = [t('help_header'), t('dedicated_notes_help_add'), t('dedicated_notes_help_back')]
+    help_lines_notes_view = [
+        t('help_header'),
+        t('dedicated_notes_help_select'),
+        t('dedicated_notes_help_delete'),
+        t('dedicated_notes_help_add'),
+        t('dedicated_notes_help_back')
+    ]
     num_help_lines_notes_view = len(help_lines_notes_view)
     reserved_rows_notes_footer = num_help_lines_notes_view + 2
 
@@ -289,13 +299,20 @@ def display_dedicated_notes_view(stdscr, data, command_buffer, entity_for_notes,
                 try: stdscr.addstr(row, 2, "..."[:width-2])
                 except curses.error: pass
             break
+
+        item_attr = curses.color_pair(COLOR_PAIR_DEFAULT)
         prefix = f"{note_idx+1}. "
+        if note_idx == selected_note_idx:
+            item_attr = curses.color_pair(COLOR_PAIR_SELECTED)
+            prefix = f"> {note_idx+1}. "
+
+
         start_col = 0
         max_text_width_for_line = width - start_col - len(prefix) -1
         if max_text_width_for_line < 0: max_text_width_for_line = 0
         lines_used = _draw_wrapped_text(stdscr, note_text, row, start_col,
                                         max_text_width_for_line, width, content_height_obj,
-                                        prefix=prefix, subsequent_indent_offset=len(prefix))
+                                        prefix=prefix, subsequent_indent_offset=len(prefix), attr=item_attr)
         row += lines_used
         if lines_used == 0 and content_height_obj[0] <=0 : break
 
@@ -328,7 +345,7 @@ def display_dedicated_notes_view(stdscr, data, command_buffer, entity_for_notes,
     stdscr.refresh()
     return True
 
-def display_daily_notes_view(stdscr, data, command_buffer, current_date_for_notes, show_help_footer):
+def display_daily_notes_view(stdscr, data, command_buffer, current_date_for_notes, show_help_footer, selected_note_idx):
     height, width = stdscr.getmaxyx()
     now_time_str = datetime.now().strftime("%H:%M:%S")
     stdscr.clear()
@@ -350,7 +367,15 @@ def display_daily_notes_view(stdscr, data, command_buffer, current_date_for_note
     if len(title[:width-1]) > 0: stdscr.addstr(row, 0, "-" * len(title[:width-1]))
     row +=1
 
-    help_lines_daily_notes = [t('help_header'), t('dedicated_notes_help_add'), t('daily_notes_help_prev'), t('daily_notes_help_next'), t('dedicated_notes_help_back')]
+    help_lines_daily_notes = [
+        t('help_header'),
+        t('dedicated_notes_help_select'),
+        t('dedicated_notes_help_delete'),
+        t('dedicated_notes_help_add'),
+        t('daily_notes_help_prev'),
+        t('daily_notes_help_next'),
+        t('dedicated_notes_help_back')
+    ]
     num_help_lines_daily_notes = len(help_lines_daily_notes)
     reserved_rows_daily_footer = num_help_lines_daily_notes + 2
 
@@ -364,13 +389,19 @@ def display_daily_notes_view(stdscr, data, command_buffer, current_date_for_note
                 try: stdscr.addstr(row, 2, "..."[:width-2])
                 except curses.error: pass
             break
+
+        item_attr = curses.color_pair(COLOR_PAIR_DEFAULT)
         prefix = f"{note_idx+1}. "
+        if note_idx == selected_note_idx:
+            item_attr = curses.color_pair(COLOR_PAIR_SELECTED)
+            prefix = f"> {note_idx+1}. "
+
         start_col = 0
         max_text_width_for_line = width - start_col - len(prefix) -1
         if max_text_width_for_line < 0: max_text_width_for_line = 0
         lines_used = _draw_wrapped_text(stdscr, note_text, row, start_col,
                                         max_text_width_for_line, width, content_height_obj,
-                                        prefix=prefix, subsequent_indent_offset=len(prefix))
+                                        prefix=prefix, subsequent_indent_offset=len(prefix), attr=item_attr)
         row += lines_used
         if lines_used == 0 and content_height_obj[0] <=0 : break
 
@@ -407,12 +438,12 @@ def display_daily_notes_view(stdscr, data, command_buffer, current_date_for_note
 def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subtask_idx=-1,
                current_view_mode=VIEW_MAIN, entity_for_dedicated_notes=None,
                current_ticket_subtask_list_for_display_arg=None, show_help_footer=True,
-               current_date_for_daily_notes_arg=None):
+               current_date_for_daily_notes_arg=None, selected_note_idx=-1):
 
     if current_view_mode == VIEW_DEDICATED_NOTES:
-        return display_dedicated_notes_view(stdscr, data, command_buffer, entity_for_dedicated_notes, show_help_footer)
+        return display_dedicated_notes_view(stdscr, data, command_buffer, entity_for_dedicated_notes, show_help_footer, selected_note_idx)
     if current_view_mode == VIEW_DAILY_NOTES:
-        return display_daily_notes_view(stdscr, data, command_buffer, current_date_for_daily_notes_arg, show_help_footer)
+        return display_daily_notes_view(stdscr, data, command_buffer, current_date_for_daily_notes_arg, show_help_footer, selected_note_idx)
 
     try:
         height, width = stdscr.getmaxyx()
@@ -1142,7 +1173,7 @@ def format_subtask_for_title(subtask_name):
 def send_desktop_notification(title, message):
     """Sends a desktop notification using notify-send."""
     try:
-        subprocess.run(['/usr/bin/notify-send', title, message], check=True)
+        subprocess.run(['/usr/bin/notify-send', title, message], check=True, capture_output=True)
     except (FileNotFoundError, subprocess.CalledProcessError) as e:
         print(f"Could not send notification: {e}", file=sys.stderr)
 
@@ -1239,10 +1270,11 @@ def poll_pull_requests(data_lock, data_ref, config):
         time.sleep(300)
 
 def convert_to_api_url(pr_url):
+    config = load_config()
     match = re.search(r'projects/(?P<projectKey>[^/]+)/repos/(?P<repositorySlug>[^/]+)/pull-requests/(?P<pullRequestId>\d+)', pr_url)
     if match:
         parts = match.groupdict()
-        return f"http://STASH_URL_CHANGE_ME:7990/rest/api/1.0/projects/{parts['projectKey']}/repos/{parts['repositorySlug']}/pull-requests/{parts['pullRequestId']}/activities"
+        return f"{config.get('STASH_URL')}/rest/api/1.0/projects/{parts['projectKey']}/repos/{parts['repositorySlug']}/pull-requests/{parts['pullRequestId']}/activities"
     return None
 
 def check_for_unhandled_comments(activities, my_user_id):
@@ -1260,16 +1292,128 @@ def check_for_unhandled_comments(activities, my_user_id):
                     unhandled_comments.append(comment)
     return unhandled_comments
 
+def event_notification_poller(data_lock, data_ref, config):
+    """A thread that checks for upcoming events and sends notifications."""
+    global sent_notifications
+
+    def get_next_occurrence(recurring_event, now):
+        """Calculates the next occurrence of a recurring event."""
+        try:
+            target_weekday = int(recurring_event['weekday']) # 0=Mon
+            event_time_str = recurring_event['time'] # "HH:MM"
+            event_time = datetime.strptime(event_time_str, "%H:%M").time()
+
+            current_weekday = now.weekday() # 0=Mon
+            days_ahead = target_weekday - current_weekday
+            if days_ahead < 0: # Target day already passed this week
+                days_ahead += 7
+            elif days_ahead == 0 and now.time() >= event_time: # Target is today, but time has passed
+                days_ahead += 7
+
+            next_date = (now + timedelta(days=days_ahead)).date()
+            return datetime.combine(next_date, event_time)
+        except (ValueError, KeyError, TypeError):
+            return None
+
+    def focus_window(window_title):
+        try:
+            subprocess.run(['/usr/bin/xdotool', 'search', '--name', window_title, 'windowactivate'], capture_output=True, check=True)
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            pass # Silently fail if xdotool is not available or fails
+
+    def open_link_in_browser(url, browser_cmd):
+        try:
+            if browser_cmd and isinstance(browser_cmd, list):
+                subprocess.Popen(browser_cmd + [url])
+            else:
+                webbrowser.open(url)
+        except Exception as e:
+            print(t('error_browser_open', e=e), file=sys.stderr)
+
+
+    while True:
+        now = datetime.now()
+
+        if now.hour == 0 and now.minute == 0: # Daily reset
+            sent_notifications.clear()
+
+        all_upcoming_events = []
+        with data_lock:
+            # Make a deep copy to work with, to release the lock quickly
+            meetings = copy.deepcopy(data_ref.get("meetings", []))
+            interruptions = copy.deepcopy(data_ref.get("interruptions", []))
+            recurring = copy.deepcopy(data_ref.get("recurring_events", []))
+
+        # Process one-time events
+        for event in meetings + interruptions:
+            try:
+                dt = datetime.fromisoformat(event['datetime'])
+                if dt > now:
+                    evt_type = 'meeting' if 'link' in event else 'interruption'
+                    details = event.get('link') or event.get('message', '')
+                    all_upcoming_events.append({'datetime': dt, 'type': evt_type, 'details': details, 'recurring': False})
+            except (ValueError, TypeError):
+                continue
+
+        # Process recurring events
+        for event in recurring:
+            next_occurrence = get_next_occurrence(event, now)
+            if next_occurrence:
+                all_upcoming_events.append({
+                    'datetime': next_occurrence,
+                    'type': event.get('type'),
+                    'details': event.get('details'),
+                    'recurring': True
+                })
+
+        # Check for notifications
+        for event in all_upcoming_events:
+            time_diff = event['datetime'] - now
+            if timedelta(seconds=0) <= time_diff < timedelta(minutes=11):
+                minutes_until = int(time_diff.total_seconds() / 60)
+
+                event_time_str = event['datetime'].strftime('%H:%M')
+                event_id = f"{event['type']}_{event['details']}_{event['datetime'].strftime('%Y%m%d%H%M')}"
+
+                notification_title = ""
+                notification_body = ""
+
+                if event['type'] == 'meeting':
+                    rec_str = f"({t('recurring')}) " if event['recurring'] else ""
+                    notification_title = t('notification_meeting_title', rec=rec_str, min=minutes_until, time=event_time_str)
+                    notification_body = t('notification_meeting_body', link=event['details'])
+                else: # interruption
+                    rec_str = f"({t('recurring')}) " if event['recurring'] else ""
+                    notification_title = t('notification_event_title', rec=rec_str, min=minutes_until, time=event_time_str)
+                    notification_body = event['details']
+
+                # 10-minute warning
+                if minutes_until == 10 and (event_id, '10min') not in sent_notifications:
+                    focus_window(config.get("NOTIFICATION_WINDOW_TITLE"))
+                    send_desktop_notification(notification_title, notification_body)
+                    sent_notifications.add((event_id, '10min'))
+
+                # 5-minute warning
+                elif minutes_until == 5 and (event_id, '5min') not in sent_notifications:
+                    focus_window(config.get("NOTIFICATION_WINDOW_TITLE"))
+                    send_desktop_notification(notification_title, notification_body)
+                    sent_notifications.add((event_id, '5min'))
+                    if event['type'] == 'meeting' and event.get('details', '').startswith('http'):
+                        open_link_in_browser(event['details'], config.get("BROWSER_COMMAND"))
+
+        time.sleep(60)
+
+
 def main(stdscr):
     global COLOR_PAIR_DEFAULT, COLOR_PAIR_REVERSE, COLOR_PAIR_GREY, COLOR_PAIR_PAUSED, COLOR_PAIR_SELECTED, COLOR_PAIR_TASK_ALL_SUBTASKS_DONE, COLOR_PAIR_URGENT_BOX, COLOR_PAIR_PR_UNHANDLED, COLOR_PAIR_PR_APPROVED
-    
+
     config = load_config()
     load_translations(config.get("LANGUAGE", "fi"))
-    
+
     if not STRINGS:
         print(f"Fatal: Could not load language files. Exiting.", file=sys.stderr)
         return
-    
+
     if config.get("API_TOKEN") == "PASTE_YOUR_BEARER_TOKEN_HERE":
         print("ERROR: API_TOKEN has not been set in config.json. Please update it and restart.", file=sys.stderr)
         return
@@ -1309,12 +1453,16 @@ def main(stdscr):
 
     current_view = VIEW_MAIN
     selected_subtask_index = -1
+    selected_note_index = -1
     entity_for_dedicated_notes = None
     show_help_footer = False
     current_date_for_daily_notes = date.today()
 
     pr_polling_thread = threading.Thread(target=poll_pull_requests, args=(data_lock, data, config), daemon=True)
     pr_polling_thread.start()
+
+    notification_thread = threading.Thread(target=event_notification_poller, args=(data_lock, data, config), daemon=True)
+    notification_thread.start()
 
     clock_refresh_interval = 1.0; last_clock_refresh_time = 0.0
     content_refresh_interval = 10.0; last_content_refresh_time = 0.0
@@ -1376,23 +1524,23 @@ def main(stdscr):
                         entity_for_dedicated_notes = {"type": "task", "name": active_main_ticket}
                         current_view = VIEW_DEDICATED_NOTES
                     if current_view == VIEW_DEDICATED_NOTES:
-                        command_buffer = ""; request_full_redraw = True
+                        command_buffer = ""; request_full_redraw = True; selected_note_index = -1
                 elif current_view in [VIEW_DEDICATED_NOTES, VIEW_DAILY_NOTES]:
                     current_view = VIEW_MAIN
-                    entity_for_dedicated_notes = None
+                    entity_for_dedicated_notes = None; selected_note_index = -1
                     command_buffer = ""; request_full_redraw = True
 
-            elif key == 27:
+            elif key == 27: # ESC key
                 if current_view in [VIEW_DEDICATED_NOTES, VIEW_DAILY_NOTES]:
                     current_view = VIEW_MAIN
-                    entity_for_dedicated_notes = None
+                    entity_for_dedicated_notes = None; selected_note_index = -1
                     command_buffer = ""; request_full_redraw = True
 
             if current_view == VIEW_MAIN:
                 if key == curses.KEY_LEFT:
                     current_view = VIEW_DAILY_NOTES
                     current_date_for_daily_notes = date.today()
-                    command_buffer = ""; request_full_redraw = True
+                    command_buffer = ""; request_full_redraw = True; selected_note_index = -1
                 elif key == curses.KEY_UP:
                     if current_ticket_subtask_list_visible:
                         if selected_subtask_index == -1 and len(current_ticket_subtask_list_visible) > 0:
@@ -1446,70 +1594,85 @@ def main(stdscr):
                     request_full_redraw = True
 
                 elif key not in [curses.KEY_UP, curses.KEY_DOWN, curses.KEY_BTAB, 27, curses.KEY_LEFT, curses.KEY_RIGHT]:
-                    if isinstance(key, str):
+                    if isinstance(key, str) and key.isprintable():
                         max_len = (width - 1) - len("> ") if width > 0 else 0
                         if len(command_buffer) < max_len:
                             command_buffer += key
                         else:
                             try: curses.beep()
                             except: pass
-                    elif key in [curses.KEY_BACKSPACE, 127]:
+                    elif key in [curses.KEY_BACKSPACE, 127, 8]:
                         command_buffer = command_buffer[:-1]
                     elif key == curses.KEY_RESIZE:
                         request_full_redraw = True
 
-            elif current_view == VIEW_DEDICATED_NOTES:
-                if key == '\n' or key == curses.KEY_ENTER:
-                    if entity_for_dedicated_notes and command_buffer.strip():
-                        ent_type = entity_for_dedicated_notes.get("type")
-                        ent_name = entity_for_dedicated_notes.get("name")
-                        with data_lock:
-                            if ent_type == "task" and ent_name:
-                                data.setdefault("notes",{}).setdefault(ent_name,[]).append(command_buffer)
-                            elif ent_type == "subtask":
-                                main_task = entity_for_dedicated_notes.get("main_task_name")
-                                sub_details = data.get("sub_tasks",{}).get(main_task,{}).get(ent_name)
-                                if sub_details:
-                                    sub_details.setdefault("notes",[]).append(command_buffer)
-                            save_data(data)
-                    command_buffer = ""; request_full_redraw = True
-                elif key not in [curses.KEY_BTAB, 27]:
-                    if isinstance(key, str): command_buffer += key
-                    elif key in [curses.KEY_BACKSPACE, 127]: command_buffer = command_buffer[:-1]
-                    request_full_redraw = True
+            elif current_view in [VIEW_DEDICATED_NOTES, VIEW_DAILY_NOTES]:
+                notes_list_ref = []
+                if current_view == VIEW_DEDICATED_NOTES and entity_for_dedicated_notes:
+                    ent_type = entity_for_dedicated_notes.get("type")
+                    ent_name = entity_for_dedicated_notes.get("name")
+                    if ent_type == "task":
+                        notes_list_ref = data.get("notes", {}).get(ent_name, [])
+                    elif ent_type == "subtask":
+                        main_task = entity_for_dedicated_notes.get("main_task_name")
+                        sub_details = data.get("sub_tasks",{}).get(main_task,{}).get(ent_name)
+                        if sub_details: notes_list_ref = sub_details.get("notes", [])
+                elif current_view == VIEW_DAILY_NOTES:
+                    date_iso = current_date_for_daily_notes.isoformat()
+                    notes_list_ref = data.get("daily_notes", {}).get(date_iso, [])
 
-            elif current_view == VIEW_DAILY_NOTES:
-                if key == curses.KEY_LEFT:
+                if key == curses.KEY_UP:
+                    if notes_list_ref:
+                        selected_note_index = (selected_note_index - 1) % len(notes_list_ref)
+                    request_full_redraw = True
+                elif key == curses.KEY_DOWN:
+                    if notes_list_ref:
+                        selected_note_index = (selected_note_index + 1) % len(notes_list_ref)
+                    request_full_redraw = True
+                elif key in (ord('d'), ord('D')):
+                    if notes_list_ref and 0 <= selected_note_index < len(notes_list_ref):
+                        with data_lock:
+                            notes_list_ref.pop(selected_note_index)
+                            save_data(data)
+                        if selected_note_index >= len(notes_list_ref) and notes_list_ref:
+                           selected_note_index = len(notes_list_ref) - 1
+                        elif not notes_list_ref:
+                            selected_note_index = -1
+                    request_full_redraw = True
+                elif key == curses.KEY_LEFT and current_view == VIEW_DAILY_NOTES:
                     current_date_for_daily_notes -= timedelta(days=1)
-                    command_buffer = ""; request_full_redraw = True
-                elif key == curses.KEY_RIGHT:
+                    command_buffer = ""; selected_note_index = -1; request_full_redraw = True
+                elif key == curses.KEY_RIGHT and current_view == VIEW_DAILY_NOTES:
                     current_date_for_daily_notes += timedelta(days=1)
                     if current_date_for_daily_notes > date.today():
+                        current_date_for_daily_notes = date.today()
                         current_view = VIEW_MAIN
-                    command_buffer = ""; request_full_redraw = True
+                    command_buffer = ""; selected_note_index = -1; request_full_redraw = True
                 elif key == '\n' or key == curses.KEY_ENTER:
                     if command_buffer.strip():
                         with data_lock:
-                            data.setdefault("daily_notes", {}).setdefault(current_date_for_daily_notes.isoformat(), []).append(command_buffer)
+                            notes_list_ref.append(command_buffer)
                             save_data(data)
                     command_buffer = ""; request_full_redraw = True
-                elif key not in [curses.KEY_BTAB, 27]:
-                    if isinstance(key, str): command_buffer += key
-                    elif key in [curses.KEY_BACKSPACE, 127]: command_buffer = command_buffer[:-1]
+                elif isinstance(key, str) and key.isprintable():
+                    command_buffer += key
+                    request_full_redraw = True
+                elif key in [curses.KEY_BACKSPACE, 127, 8]:
+                    command_buffer = command_buffer[:-1]
                     request_full_redraw = True
 
             # FIX: Redraw the UI after every valid keypress.
             request_full_redraw = True
             last_content_refresh_time = 0
-            display_ui(stdscr, data, command_buffer, request_full_redraw, selected_subtask_index, current_view, entity_for_dedicated_notes, current_ticket_subtask_list_visible, show_help_footer, current_date_for_daily_notes)
+            display_ui(stdscr, data, command_buffer, request_full_redraw, selected_subtask_index, current_view, entity_for_dedicated_notes, current_ticket_subtask_list_visible, show_help_footer, current_date_for_daily_notes, selected_note_index)
             if request_full_redraw : request_full_redraw = False
 
         if not user_activity_caused_draw_this_cycle:
             if current_time - last_content_refresh_time >= content_refresh_interval:
                 request_full_redraw = True
-            
+
             if request_full_redraw or (current_time - last_clock_refresh_time >= clock_refresh_interval):
-                display_ui(stdscr, data, command_buffer, request_full_redraw, selected_subtask_index, current_view, entity_for_dedicated_notes, current_ticket_subtask_list_visible, show_help_footer, current_date_for_daily_notes)
+                display_ui(stdscr, data, command_buffer, request_full_redraw, selected_subtask_index, current_view, entity_for_dedicated_notes, current_ticket_subtask_list_visible, show_help_footer, current_date_for_daily_notes, selected_note_index)
                 last_clock_refresh_time = current_time
                 if request_full_redraw:
                     last_content_refresh_time = current_time

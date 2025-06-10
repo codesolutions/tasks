@@ -1,5 +1,6 @@
 {
     "weekdays": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
+    "recurring": "recurring",
     "error_locale": "Warning: Could not set locale ({e}). Non-ASCII characters may not work correctly.",
     "error_json_read": "Error reading file {file}. Creating an empty structure.",
     "error_json_save": "Error saving file {file}: {e}",
@@ -7,6 +8,7 @@
     "error_curses": "Curses error in main program: {e}",
     "error_unexpected": "Unexpected error: {e}",
     "error_terminal_restore": "Error restoring terminal: {e_cleanup}",
+    "error_browser_open": "Could not open link in browser: {e}",
     "app_closed": "Jira Tracker closed.",
     "time_ago": "{time_str} ago",
     "time_in": "in {time_str}",
@@ -52,7 +54,9 @@
     "dedicated_notes_header_subtask": "Task: '{main_task}' / Sub-task: '{name}' notes:",
     "dedicated_notes_no_selection": "No item selected for notes.",
     "dedicated_notes_no_notes": "No notes for this item.",
-    "dedicated_notes_help_add": "  Enter - Add line",
+    "dedicated_notes_help_select": "  Up/Down - Select note",
+    "dedicated_notes_help_delete": "  d       - Delete selected note",
+    "dedicated_notes_help_add": "  Enter   - Add new note from input",
     "dedicated_notes_help_back": "  Shift+TAB/ESC - Return",
     "daily_notes_header": "Notes for {date} ({weekday}):",
     "daily_notes_no_notes": "No notes for this day.",
@@ -101,5 +105,9 @@
     "notification_pr_approved_title": "{main_task}: {sub_task}",
     "notification_pr_approved_body": "PR has been approved and is ready to merge.\n{pr_url}",
     "notification_pr_merged_title": "{main_task}: {sub_task}",
-    "notification_pr_merged_body": "PR has been merged.\n{pr_url}"
+    "notification_pr_merged_body": "PR has been merged.\n{pr_url}",
+    "notification_meeting_title": "Meeting {rec}starts in {min} min: {time}",
+    "notification_meeting_body": "Link: {link}",
+    "notification_event_title": "Event {rec}starts in {min} min: {time}",
+    "notification_event_body": "{details}"
 }

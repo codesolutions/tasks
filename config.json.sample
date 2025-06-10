@@ -1,5 +1,12 @@
 {
     "API_TOKEN": "from_gitlab_server",
+    "STASH_URL": "http://URL_TO_STASH:7990",
     "USER_ID": ENTER_YOUR_GITLAB_ID_FROM_JSON,
-    "LANGUAGE": "en"
+    "LANGUAGE": "en",
+    "NOTIFICATION_WINDOW_TITLE": "TODAYTASKS",
+    "BROWSER_COMMAND": [
+        "/usr/bin/google-chrome",
+        "--profile-directory=Profile 1",
+        "--new-window"
+    ]
 }

@@ -1,5 +1,6 @@
 {
     "weekdays": ["Maanantai", "Tiistai", "Keskiviikko", "Torstai", "Perjantai", "Lauantai", "Sunnuntai"],
+    "recurring": "toistuva",
     "error_locale": "Varoitus: Localea ei voitu asettaa ({e}). Skandit eivät välttämättä toimi oikein.",
     "error_json_read": "Virhe tiedoston {file} lukemisessa. Luodaan tyhjä rakenne.",
     "error_json_save": "Virhe tiedoston {file} tallentamisessa: {e}",
@@ -7,6 +8,7 @@
     "error_curses": "Curses-virhe pääohjelmassa: {e}",
     "error_unexpected": "Odottamaton virhe: {e}",
     "error_terminal_restore": "Virhe terminaalin palautuksessa: {e_cleanup}",
+    "error_browser_open": "Linkkiä ei voitu avata selaimessa: {e}",
     "app_closed": "Jira Tracker suljettu.",
     "time_ago": "{time_str} sitten",
     "time_in": "{time_str} päästä",
@@ -52,7 +54,9 @@
     "dedicated_notes_header_subtask": "Tehtävä: '{main_task}' / Alatehtävä: '{name}' muistiinpanot:",
     "dedicated_notes_no_selection": "Ei valittua kohdetta muistiinpanoille.",
     "dedicated_notes_no_notes": "Ei muistiinpanoja tälle kohteelle.",
-    "dedicated_notes_help_add": "  Enter - Lisää rivi",
+    "dedicated_notes_help_select": "  Ylös/Alas - Valitse rivi",
+    "dedicated_notes_help_delete": "  d         - Poista valittu rivi",
+    "dedicated_notes_help_add": "  Enter     - Lisää uusi rivi syötteestä",
     "dedicated_notes_help_back": "  Shift+TAB/ESC - Palaa",
     "daily_notes_header": "Päivän {date} ({weekday}) muistiinpanot:",
     "daily_notes_no_notes": "Ei muistiinpanoja tälle päivälle.",
@@ -101,5 +105,9 @@
     "notification_pr_approved_title": "{main_task}: {sub_task}",
     "notification_pr_approved_body": "PR on hyväksytty ja valmis mergeen.\n{pr_url}",
     "notification_pr_merged_title": "{main_task}: {sub_task}",
-    "notification_pr_merged_body": "PR on mergetty.\n{pr_url}"
+    "notification_pr_merged_body": "PR on mergetty.\n{pr_url}",
+    "notification_meeting_title": "Palaveri {rec}alkaa {min} min kuluttua: {time}",
+    "notification_meeting_body": "Linkki: {link}",
+    "notification_event_title": "Tapahtuma {rec}alkaa {min} min kuluttua: {time}",
+    "notification_event_body": "{details}"
 }
