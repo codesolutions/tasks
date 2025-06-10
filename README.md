@@ -39,7 +39,7 @@ A terminal-based tool for tracking personal projects, their associated tickets (
     ```json
     {
         "API_TOKEN": "PASTE_YOUR_BEARER_TOKEN_HERE",
-        "USER_ID": 3006,
+        "USER_ID": 1234,
         "LANGUAGE": "fi"
     }
     ```
