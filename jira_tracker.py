@@ -1242,7 +1242,7 @@ def convert_to_api_url(pr_url):
     match = re.search(r'projects/(?P<projectKey>[^/]+)/repos/(?P<repositorySlug>[^/]+)/pull-requests/(?P<pullRequestId>\d+)', pr_url)
     if match:
         parts = match.groupdict()
-        return f"http://GITLABSERVERADDRESS:7990/rest/api/1.0/projects/{parts['projectKey']}/repos/{parts['repositorySlug']}/pull-requests/{parts['pullRequestId']}/activities"
+        return f"http://STASH_URL_CHANGE_ME:7990/rest/api/1.0/projects/{parts['projectKey']}/repos/{parts['repositorySlug']}/pull-requests/{parts['pullRequestId']}/activities"
     return None
 
 def check_for_unhandled_comments(activities, my_user_id):
@@ -1499,6 +1499,8 @@ def main(stdscr):
                     request_full_redraw = True
 
             # FIX: Redraw the UI after every valid keypress.
+            request_full_redraw = True
+            last_content_refresh_time = 0
             display_ui(stdscr, data, command_buffer, request_full_redraw, selected_subtask_index, current_view, entity_for_dedicated_notes, current_ticket_subtask_list_visible, show_help_footer, current_date_for_daily_notes)
             if request_full_redraw : request_full_redraw = False
 

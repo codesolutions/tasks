@@ -46,6 +46,7 @@ A terminal-based tool for tracking personal projects, their associated tickets (
     * `API_TOKEN`: Your Bearer token for the Stash/Bitbucket API.
     * `USER_ID`: Your numeric user ID from the API. This is used to distinguish your comments from others'.
     * `LANGUAGE`: Set the display language. Defaults to `"fi"`. Change to `"en"` for English.
+    * NOTE: Change STASH_URL_CHANGE_ME from APP itself!!! @todo
 
 3.  **Language Files**: The application looks for translations in a `lang` directory. Ensure `lang/en.json` and `lang/fi.json` exist.
 
