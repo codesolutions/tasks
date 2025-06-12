@@ -96,7 +96,9 @@ VIEW_DEDICATED_NOTES = "dedicated_notes"
 VIEW_DAILY_NOTES = "daily_notes"
 
 WEEKDAY_MAP = {
-    'ma': 0, 'ti': 1, 'ke': 2, 'to': 3, 'pe': 4, 'la': 5, 'su': 6
+    'ma': 0, 'mo': 0, 'ti': 1, 'tu': 1, 'ke': 2, 'we': 2,
+    'to': 3, 'th': 3, 'pe': 4, 'fr': 4, 'la': 5, 'sa': 5,
+    'su': 6
 }
 
 
