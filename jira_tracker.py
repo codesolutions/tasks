@@ -16,6 +16,9 @@ import webbrowser
 # --- Global Dictionaries ---
 STRINGS = {} # Global dictionary to hold loaded strings.
 sent_notifications = set() # Global set to track sent notifications to avoid duplicates
+pull_requests_for_review = []
+reviews_lock = threading.Lock()
+sent_review_notifications = set()
 
 # --- Translation & Config Functions ---
 def load_config():
@@ -24,6 +27,7 @@ def load_config():
     default_config = {
         "API_TOKEN": "PASTE_YOUR_BEARER_TOKEN_HERE",
         "STASH_URL": "http://your-stash-instance.com:7990",
+        "STASH_REVIEW_URL": "http://your-stash-instance.com:7990/rest/api/latest/dashboard/pull-requests?state=OPEN&role=REVIEWER",
         "USER_ID": 3006,
         "LANGUAGE": "fi",
         "NOTIFICATION_WINDOW_TITLE": "TODAYTASKS",
@@ -448,6 +452,8 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
                current_ticket_subtask_list_for_display_arg=None, show_help_footer=True,
                current_date_for_daily_notes_arg=None, selected_note_idx=-1):
 
+    global pull_requests_for_review
+
     if current_view_mode == VIEW_DEDICATED_NOTES:
         return display_dedicated_notes_view(stdscr, data, command_buffer, entity_for_dedicated_notes, show_help_footer, selected_note_idx)
     if current_view_mode == VIEW_DAILY_NOTES:
@@ -480,10 +486,18 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
     min_panel_item_len = 8
     actual_panel_content_width = 0
 
-    jira_box_lines_content = []
-    if full_redraw or display_right_panel :
-        jira_box_lines_content = read_jira_box_content(max_lines=10)
-    display_jira_box_content_area = bool(jira_box_lines_content) and display_right_panel
+    info_box_content = []
+    with reviews_lock:
+        if pull_requests_for_review:
+            info_box_content.append(t('ui_reviews_header'))
+            for pr in pull_requests_for_review:
+                repo_name = f"{pr['toRef']['repository']['project']['key']}/{pr['toRef']['repository']['name']}"
+                info_box_content.append(f" {repo_name} #{pr['id']}")
+                info_box_content.append(f"  {pr['title']}")
+            info_box_content.append("---")
+    
+    info_box_content.extend(read_jira_box_content(max_lines=10))
+    display_info_box_area = bool(info_box_content) and display_right_panel
 
     if display_right_panel:
         max_len_of_panel_item_str = 0
@@ -573,16 +587,13 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
     stdscr.clear()
     stdscr.attron(curses.color_pair(COLOR_PAIR_DEFAULT))
 
-    num_jira_box_lines_to_show = 0
-    jira_box_separator_needed = False
-    if display_jira_box_content_area:
-        num_jira_box_lines_to_show = min(len(jira_box_lines_content), 10)
-        if num_jira_box_lines_to_show > 0:
-            jira_box_separator_needed = True
-
     if display_right_panel:
         panel_text_start_col_abs = effective_main_width + len(separator_char)
-        max_rows_for_ticket_list_in_panel = (height -1) - (num_jira_box_lines_to_show + (1 if jira_box_separator_needed else 0))
+        max_rows_for_ticket_list_in_panel = height -1
+
+        if display_info_box_area:
+             max_rows_for_ticket_list_in_panel -= (len(info_box_content))
+
 
         for i, ticket_name_in_panel in enumerate(all_displayable_tickets):
             if i >= max_rows_for_ticket_list_in_panel : break
@@ -620,25 +631,11 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
                 try: stdscr.addstr(i, actual_draw_x, text_to_draw, item_attr)
                 except curses.error: pass
 
-        if num_jira_box_lines_to_show > 0:
-            jira_box_content_start_y = max_rows_for_ticket_list_in_panel
-            if jira_box_separator_needed:
-                if jira_box_content_start_y < height -1 and panel_text_start_col_abs < width:
-                    try:
-                        sep_text = t('ui_info_box_header')
-                        current_panel_actual_width = actual_panel_content_width if actual_panel_content_width > 0 else 1
-                        sep_len = len(sep_text)
-                        sep_x = panel_text_start_col_abs + (current_panel_actual_width - sep_len) // 2
-                        if sep_x < panel_text_start_col_abs: sep_x = panel_text_start_col_abs
-                        drawable_sep = sep_text[:current_panel_actual_width]
-                        if len(drawable_sep)>0:
-                            stdscr.addstr(jira_box_content_start_y, sep_x, drawable_sep, curses.color_pair(COLOR_PAIR_URGENT_BOX))
-                    except curses.error: pass
-                jira_box_content_start_y += 1
+        if display_info_box_area:
+            info_box_start_y = max(max_rows_for_ticket_list_in_panel, i + 1 if 'i' in locals() else 0)
 
-            for line_idx, line_content in enumerate(jira_box_lines_content):
-                if line_idx >= num_jira_box_lines_to_show: break
-                current_draw_y = jira_box_content_start_y + line_idx
+            for line_idx, line_content in enumerate(info_box_content):
+                current_draw_y = info_box_start_y + line_idx
                 if current_draw_y >= height -1 : break
 
                 current_panel_actual_width_for_box = actual_panel_content_width if actual_panel_content_width > 0 else 1
@@ -1326,6 +1323,55 @@ def send_desktop_notification(title, message):
     except (FileNotFoundError, subprocess.CalledProcessError) as e:
         print(f"Could not send notification: {e}", file=sys.stderr)
 
+def poll_reviews_needed(config):
+    """Polls for pull requests that need the user's review."""
+    global pull_requests_for_review, sent_review_notifications
+    
+    api_token = config.get("API_TOKEN")
+    user_id = config.get("USER_ID")
+    review_url = config.get("STASH_REVIEW_URL")
+
+    if not all([api_token, user_id, review_url]):
+        return # Missing essential config
+
+    headers = {"Authorization": f"Bearer {api_token}", "Accept": "application/json;charset=UTF-8"}
+
+    while True:
+        try:
+            response = requests.get(review_url, headers=headers, timeout=20)
+            response.raise_for_status()
+            prs_data = response.json()
+            
+            pending_reviews = []
+            for pr in prs_data.get('values', []):
+                for reviewer in pr.get('reviewers', []):
+                    # reviewer.get('user', {}).get('id') == user_id and
+                    if reviewer.get('status') == 'UNAPPROVED':
+                        pending_reviews.append(pr)
+                        # Handle notifications
+                        if pr['id'] not in sent_review_notifications:
+                            repo = f"{pr['toRef']['repository']['project']['key']}/{pr['toRef']['repository']['name']}"
+                            notif_title = t('notification_review_title')
+                            notif_body = t('notification_review_body', repo=repo, title=pr['title'])
+                            send_desktop_notification(notif_title, notif_body)
+                            sent_review_notifications.add(pr['id'])
+                        break # Move to next PR once user is found as unapproved reviewer
+            
+            with reviews_lock:
+                pull_requests_for_review.clear()
+                pull_requests_for_review.extend(pending_reviews)
+
+        except requests.exceptions.RequestException as e:
+            print(t('polling_err', url=review_url, e=e), file=sys.stderr)
+            pass # Silently continue on network errors
+        
+        # Clear sent notification list if no PRs are pending review, so user gets notified again if they reappear
+        with reviews_lock:
+             current_review_ids = {pr['id'] for pr in pull_requests_for_review}
+             sent_review_notifications.intersection_update(current_review_ids)
+
+        time.sleep(300) # Poll every 5 minutes
+
 def poll_pull_requests(data_lock, data_ref, config):
     api_token = config.get("API_TOKEN")
     my_user_id = config.get("USER_ID")
@@ -1615,6 +1661,9 @@ def main(stdscr):
     notification_thread = threading.Thread(target=event_notification_poller, args=(data_lock, data, config), daemon=True)
     notification_thread.start()
 
+    review_polling_thread = threading.Thread(target=poll_reviews_needed, args=(config,), daemon=True)
+    review_polling_thread.start()
+
     clock_refresh_interval = 1.0; last_clock_refresh_time = 0.0
     content_refresh_interval = 10.0; last_content_refresh_time = 0.0
     request_full_redraw = True
@@ -1697,12 +1746,17 @@ def main(stdscr):
                     command_buffer = ""; request_full_redraw = True; selected_note_index = -1
                 elif key == curses.KEY_UP:
                     if current_ticket_subtask_list_visible:
-                        if selected_subtask_index > -1:
+                        if selected_subtask_index == 0:
+                            selected_subtask_index = -1
+                        elif selected_subtask_index > 0:
                             selected_subtask_index -= 1
                         request_full_redraw = True
                 elif key == curses.KEY_DOWN:
                     if current_ticket_subtask_list_visible:
-                        if selected_subtask_index < len(current_ticket_subtask_list_visible) - 1:
+                        last_idx = len(current_ticket_subtask_list_visible) - 1
+                        if selected_subtask_index == last_idx:
+                             selected_subtask_index = -1
+                        elif selected_subtask_index < last_idx:
                             selected_subtask_index += 1
                         request_full_redraw = True
                 elif key == '\n' or key == curses.KEY_ENTER:

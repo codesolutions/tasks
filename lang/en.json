@@ -120,5 +120,8 @@
     "notification_meeting_title": "Meeting {rec}starts in {min} min: {time}",
     "notification_meeting_body": "Link: {link}",
     "notification_event_title": "Event {rec}starts in {min} min: {time}",
-    "notification_event_body": "{details}"
+    "notification_event_body": "{details}",
+    "notification_review_title": "--- Reviews Needed ---",
+    "notification_review_body": "{title}\n{repo}",
+    "ui_reviews_header": "--- Reviews Needed ---"
 }
