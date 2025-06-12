@@ -82,7 +82,7 @@ except locale.Error as e:
 # -- Constants and Globals --
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_FILE = os.path.join(SCRIPT_DIR, "jira_data.json")
-JIRA_BOX_FILE = os.path.join(SCRIPT_DIR, "jira_box.txt")
+JIRA_BOX_FILE = os.path.join(SCRIPT_DIR, "jira_box2.txt")
 
 # -- Color Pairs --
 COLOR_PAIR_DEFAULT = 1
@@ -485,20 +485,7 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
     min_main_content_width = 35
     min_panel_item_len = 8
     actual_panel_content_width = 0
-
-    info_box_content = []
-    with reviews_lock:
-        if pull_requests_for_review:
-            info_box_content.append(t('ui_reviews_header'))
-            for pr in pull_requests_for_review:
-                repo_name = f"{pr['toRef']['repository']['project']['key']}/{pr['toRef']['repository']['name']}"
-                info_box_content.append(f" {repo_name} #{pr['id']}")
-                info_box_content.append(f"  {pr['title']}")
-            info_box_content.append("---")
     
-    info_box_content.extend(read_jira_box_content(max_lines=10))
-    display_info_box_area = bool(info_box_content) and display_right_panel
-
     if display_right_panel:
         max_len_of_panel_item_str = 0
         if all_displayable_tickets:
@@ -591,10 +578,6 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
         panel_text_start_col_abs = effective_main_width + len(separator_char)
         max_rows_for_ticket_list_in_panel = height -1
 
-        if display_info_box_area:
-             max_rows_for_ticket_list_in_panel -= (len(info_box_content))
-
-
         for i, ticket_name_in_panel in enumerate(all_displayable_tickets):
             if i >= max_rows_for_ticket_list_in_panel : break
             if i >= height -1 : break
@@ -631,24 +614,14 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
                 try: stdscr.addstr(i, actual_draw_x, text_to_draw, item_attr)
                 except curses.error: pass
 
-        if display_info_box_area:
-            info_box_start_y = max(max_rows_for_ticket_list_in_panel, i + 1 if 'i' in locals() else 0)
-
-            for line_idx, line_content in enumerate(info_box_content):
-                current_draw_y = info_box_start_y + line_idx
-                if current_draw_y >= height -1 : break
-
-                current_panel_actual_width_for_box = actual_panel_content_width if actual_panel_content_width > 0 else 1
-                text_to_draw_box = line_content[:current_panel_actual_width_for_box] # Trimmed here
-                if current_panel_actual_width_for_box > 0:
-                    try:
-                        stdscr.addstr(current_draw_y, panel_text_start_col_abs, text_to_draw_box, curses.color_pair(COLOR_PAIR_URGENT_BOX))
-                    except curses.error: pass
-
     row = 0
     if effective_main_width > 0 :
         stdscr.addstr(row, 0, t('ui_clock', now_time_str=now_time_str)[:effective_main_width])
     row += 1
+
+    content_height_val = height - (row + 1) - footer_total_height # +1 for the separator
+    if content_height_val < 0: content_height_val = 0
+    content_height_obj = [content_height_val]
 
     focused_ticket = data.get("focused_ticket")
     focused_subtask = data.get("focused_subtask")
@@ -657,8 +630,37 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
             focus_text = t('ui_focused_task_prefix', name=focused_ticket)
             if focused_subtask:
                 focus_text += f" / {focused_subtask}"
-            stdscr.addstr(row, 0, focus_text[:effective_main_width], curses.color_pair(COLOR_PAIR_FOCUSED) | curses.A_BOLD)
-        row +=1
+            lines_used = _draw_wrapped_text(stdscr, focus_text, row, 0, effective_main_width, effective_main_width, content_height_obj, attr=curses.color_pair(COLOR_PAIR_FOCUSED) | curses.A_BOLD)
+            row += lines_used
+        
+    with reviews_lock:
+        if pull_requests_for_review:
+            if effective_main_width > 0:
+                header_text = t('ui_reviews_header')
+                lines_used = _draw_wrapped_text(stdscr, header_text, row, 0, effective_main_width, effective_main_width, content_height_obj, attr=curses.color_pair(COLOR_PAIR_URGENT_BOX))
+                row += lines_used
+            for pr in pull_requests_for_review:
+                if content_height_obj[0] <= 0: break
+                repo_name = f"{pr['toRef']['repository']['project']['key']}/{pr['toRef']['repository']['name']}"
+                line1 = f" ** {pr['title']} ** "
+                lines_used = _draw_wrapped_text(stdscr, line1, row, 0, effective_main_width, effective_main_width, content_height_obj, prefix="", attr=curses.color_pair(COLOR_PAIR_URGENT_BOX))
+                row += lines_used
+                if content_height_obj[0] <= 0: break
+                line2 = f" {pr['links']['self'][0]['href']}"
+                lines_used = _draw_wrapped_text(stdscr, line2, row, 0, effective_main_width, effective_main_width, content_height_obj, prefix="", attr=curses.color_pair(COLOR_PAIR_URGENT_BOX))
+                row += lines_used
+
+    jira_box_lines = read_jira_box_content(max_lines=10)
+    if jira_box_lines:
+        for line in jira_box_lines:
+            if content_height_obj[0] <= 0: break
+            lines_used = _draw_wrapped_text(stdscr, line, row, 0, effective_main_width, effective_main_width, content_height_obj, attr=curses.color_pair(COLOR_PAIR_URGENT_BOX))
+            row += lines_used
+
+    if pull_requests_for_review or jira_box_lines:
+        if effective_main_width > 0:
+            lines_used = _draw_wrapped_text(stdscr, "---", row, 0, effective_main_width, effective_main_width, content_height_obj)
+            row += lines_used
 
     initial_content_start_row = row
     if effective_main_width > 0:
@@ -666,10 +668,7 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
         initial_content_start_row +=1
     row = initial_content_start_row
 
-    content_height_val = height - initial_content_start_row - footer_total_height
-    if content_height_val < 0: content_height_val = 0
-    content_height_obj = [content_height_val]
-
+    content_height_obj = [height - initial_content_start_row - footer_total_height]
     current_ticket = data.get("current_ticket")
 
     if current_ticket:
@@ -1124,11 +1123,11 @@ def handle_input(data, command_parts, stdscr, current_view_mode, selected_subtas
 
             # First, search for a subtask
             found_subtasks = []
-            for ticket_name, subtasks in data.get("sub_tasks", {}).items():
-                if ticket_name in completed_tickets: continue
+            for ticket_name_iter, subtasks in data.get("sub_tasks", {}).items():
+                if ticket_name_iter in completed_tickets: continue
                 for st_name, st_details in subtasks.items():
                     if identifier.lower() in st_name.lower():
-                        found_subtasks.append((ticket_name, st_name))
+                        found_subtasks.append((ticket_name_iter, st_name))
             
             if len(found_subtasks) == 1:
                 target_ticket, target_subtask = found_subtasks[0]
@@ -1331,8 +1330,8 @@ def poll_reviews_needed(config):
     user_id = config.get("USER_ID")
     review_url = config.get("STASH_REVIEW_URL")
 
-    if not all([api_token, user_id, review_url]):
-        return # Missing essential config
+    if not all([api_token, user_id, review_url]) or "your-stash-instance.com" in review_url:
+        return # Missing essential config or using placeholder
 
     headers = {"Authorization": f"Bearer {api_token}", "Accept": "application/json;charset=UTF-8"}
 
@@ -1345,15 +1344,14 @@ def poll_reviews_needed(config):
             pending_reviews = []
             for pr in prs_data.get('values', []):
                 for reviewer in pr.get('reviewers', []):
-                    # reviewer.get('user', {}).get('id') == user_id and
-                    if reviewer.get('status') == 'UNAPPROVED':
+                    if reviewer.get('user', {}).get('id') == user_id and reviewer.get('status') == 'UNAPPROVED':
                         pending_reviews.append(pr)
                         # Handle notifications
                         if pr['id'] not in sent_review_notifications:
-                            repo = f"{pr['toRef']['repository']['project']['key']}/{pr['toRef']['repository']['name']}"
+                            repo = f"{pr['links']['self'][0]['href']}"
                             notif_title = t('notification_review_title')
                             notif_body = t('notification_review_body', repo=repo, title=pr['title'])
-                            send_desktop_notification(notif_title, notif_body)
+                            send_desktop_notification(pr['title'], repo)
                             sent_review_notifications.add(pr['id'])
                         break # Move to next PR once user is found as unapproved reviewer
             
@@ -1660,9 +1658,10 @@ def main(stdscr):
 
     notification_thread = threading.Thread(target=event_notification_poller, args=(data_lock, data, config), daemon=True)
     notification_thread.start()
-
+    
     review_polling_thread = threading.Thread(target=poll_reviews_needed, args=(config,), daemon=True)
     review_polling_thread.start()
+
 
     clock_refresh_interval = 1.0; last_clock_refresh_time = 0.0
     content_refresh_interval = 10.0; last_content_refresh_time = 0.0
@@ -1746,18 +1745,16 @@ def main(stdscr):
                     command_buffer = ""; request_full_redraw = True; selected_note_index = -1
                 elif key == curses.KEY_UP:
                     if current_ticket_subtask_list_visible:
-                        if selected_subtask_index == 0:
-                            selected_subtask_index = -1
-                        elif selected_subtask_index > 0:
+                        if selected_subtask_index > -1:
                             selected_subtask_index -= 1
                         request_full_redraw = True
                 elif key == curses.KEY_DOWN:
                     if current_ticket_subtask_list_visible:
                         last_idx = len(current_ticket_subtask_list_visible) - 1
-                        if selected_subtask_index == last_idx:
-                             selected_subtask_index = -1
-                        elif selected_subtask_index < last_idx:
+                        if selected_subtask_index < last_idx:
                             selected_subtask_index += 1
+                        else:
+                            selected_subtask_index = -1
                         request_full_redraw = True
                 elif key == '\n' or key == curses.KEY_ENTER:
                     cmd_parts = command_buffer.split()
