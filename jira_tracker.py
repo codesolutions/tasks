@@ -23,6 +23,7 @@ def load_config():
     config_path = os.path.join(SCRIPT_DIR, "config.json")
     default_config = {
         "API_TOKEN": "PASTE_YOUR_BEARER_TOKEN_HERE",
+        "STASH_URL": "http://your-stash-instance.com:7990",
         "USER_ID": 3006,
         "LANGUAGE": "fi",
         "NOTIFICATION_WINDOW_TITLE": "TODAYTASKS",
@@ -89,6 +90,7 @@ COLOR_PAIR_TASK_ALL_SUBTASKS_DONE = 6
 COLOR_PAIR_URGENT_BOX = 7
 COLOR_PAIR_PR_UNHANDLED = 8
 COLOR_PAIR_PR_APPROVED = 9
+COLOR_PAIR_FOCUSED = 10
 
 # -- Views --
 VIEW_MAIN = "main"
@@ -98,7 +100,7 @@ VIEW_DAILY_NOTES = "daily_notes"
 WEEKDAY_MAP = {
     'ma': 0, 'mo': 0, 'ti': 1, 'tu': 1, 'ke': 2, 'we': 2,
     'to': 3, 'th': 3, 'pe': 4, 'fr': 4, 'la': 5, 'sa': 5,
-    'su': 6
+    'su': 6, 'su': 6
 }
 
 
@@ -114,6 +116,9 @@ def load_data():
         pass
 
     data.setdefault("current_ticket", None)
+    data.setdefault("focused_ticket", None)
+    data.setdefault("focused_subtask", None)
+    data.setdefault("completed_tickets", [])
     data.setdefault("task_start_time", None)
     data.setdefault("sub_tasks", {})
     data.setdefault("tasks_done", {})
@@ -130,13 +135,14 @@ def load_data():
             for sub_task_name, sub_task_details in list(sub_tasks_for_ticket.items()):
                 if not isinstance(sub_task_details, dict):
                     current_done_status = sub_task_details
-                    sub_tasks_for_ticket[sub_task_name] = {"done": current_done_status, "notes": [], "hidden": False, "pr_url": None, "pr_status": None}
+                    sub_tasks_for_ticket[sub_task_name] = {"done": current_done_status, "notes": [], "hidden": False, "pr_url": None, "pr_status": None, "focused": False}
                 else:
                     sub_task_details.setdefault("done", False)
                     sub_task_details.setdefault("notes", [])
                     sub_task_details.setdefault("hidden", False)
                     sub_task_details.setdefault("pr_url", None)
-                    sub_task_details.setdefault("pr_status", None) # New PR status field
+                    sub_task_details.setdefault("pr_status", None)
+                    sub_task_details.setdefault("focused", False)
                     # Old field cleanup for migration
                     if "pr_unhandled_comments" in sub_task_details:
                         if sub_task_details["pr_unhandled_comments"] and sub_task_details.get("pr_status") is None:
@@ -303,7 +309,7 @@ def display_dedicated_notes_view(stdscr, data, command_buffer, entity_for_notes,
             break
 
         item_attr = curses.color_pair(COLOR_PAIR_DEFAULT)
-        prefix = f"{note_idx+1}. "
+        prefix = f"  {note_idx+1}. "
         if note_idx == selected_note_idx:
             item_attr = curses.color_pair(COLOR_PAIR_SELECTED)
             prefix = f"> {note_idx+1}. "
@@ -393,7 +399,7 @@ def display_daily_notes_view(stdscr, data, command_buffer, current_date_for_note
             break
 
         item_attr = curses.color_pair(COLOR_PAIR_DEFAULT)
-        prefix = f"{note_idx+1}. "
+        prefix = f"  {note_idx+1}. "
         if note_idx == selected_note_idx:
             item_attr = curses.color_pair(COLOR_PAIR_SELECTED)
             prefix = f"> {note_idx+1}. "
@@ -456,13 +462,16 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
 
     if height <= 0 or width <= 0: return False
 
+    completed_tickets = data.get("completed_tickets", [])
     all_tickets_set = set()
     if data.get("current_ticket"): all_tickets_set.add(data.get("current_ticket"))
     all_tickets_set.update(data.get("sub_tasks", {}).keys())
     all_tickets_set.update(data.get("notes", {}).keys())
     for paused_item in data.get("paused_tasks", []):
         if paused_item.get("ticket"): all_tickets_set.add(paused_item["ticket"])
-    all_displayable_tickets = sorted(list(filter(None, all_tickets_set)))
+    
+    all_displayable_tickets = sorted([t for t in list(filter(None, all_tickets_set)) if t not in completed_tickets])
+
 
     display_right_panel = bool(all_displayable_tickets)
     separator_char = "|"
@@ -509,7 +518,7 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
         "full": [
             t('help_header'), t('help_switch_task'), t('help_new_task'), t('help_add_subtask'),
             t('help_hide_subtask'), t('help_add_pr'), t('help_done_subtask'), t('help_done_task'),
-            t('help_add_meeting'), t('help_add_event'), t('help_add_note'), t('help_toggle_help'),
+            t('help_add_meeting'), t('help_add_event'), t('help_add_note'), t('help_set_focus'), t('help_set_subtask_focus'), t('help_toggle_help'),
             t('help_daily_notes'), t('help_notes_view'), t('help_quit')
         ],
         "hidden": [t('help_hidden_prompt')]
@@ -531,6 +540,8 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
                     attr_line0 = curses.color_pair(COLOR_PAIR_DEFAULT)
                     if data.get("current_ticket") == ticket_name_line0:
                         attr_line0 = curses.color_pair(COLOR_PAIR_SELECTED) | curses.A_BOLD
+                    elif data.get("focused_ticket") == ticket_name_line0:
+                        attr_line0 = curses.color_pair(COLOR_PAIR_FOCUSED)
                     else:
                         subtasks_for_ticket0 = data.get("sub_tasks", {}).get(ticket_name_line0, {})
                         if any(st.get("pr_status") == 'attention_needed' for st in subtasks_for_ticket0.values() if isinstance(st, dict)):
@@ -584,6 +595,8 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
             item_attr = curses.color_pair(COLOR_PAIR_DEFAULT)
             if data.get("current_ticket") == ticket_name_in_panel:
                 item_attr = curses.color_pair(COLOR_PAIR_SELECTED) | curses.A_BOLD
+            elif data.get("focused_ticket") == ticket_name_in_panel:
+                item_attr = curses.color_pair(COLOR_PAIR_FOCUSED)
             else:
                 subtasks_for_this_panel_ticket = data.get("sub_tasks", {}).get(ticket_name_in_panel, {})
                 # Check for PR status for background color
@@ -634,10 +647,22 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
                     try:
                         stdscr.addstr(current_draw_y, panel_text_start_col_abs, text_to_draw_box, curses.color_pair(COLOR_PAIR_URGENT_BOX))
                     except curses.error: pass
+
     row = 0
     if effective_main_width > 0 :
         stdscr.addstr(row, 0, t('ui_clock', now_time_str=now_time_str)[:effective_main_width])
     row += 1
+
+    focused_ticket = data.get("focused_ticket")
+    focused_subtask = data.get("focused_subtask")
+    if focused_ticket:
+        if effective_main_width > 0:
+            focus_text = t('ui_focused_task_prefix', name=focused_ticket)
+            if focused_subtask:
+                focus_text += f" / {focused_subtask}"
+            stdscr.addstr(row, 0, focus_text[:effective_main_width], curses.color_pair(COLOR_PAIR_FOCUSED) | curses.A_BOLD)
+        row +=1
+
     initial_content_start_row = row
     if effective_main_width > 0:
         stdscr.addstr(row, 0, "-" * effective_main_width)
@@ -678,7 +703,15 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
                 if content_height_obj[0] <= 0: break
                 if effective_main_width <= 4: break
                 is_done = sub_task_details_obj.get("done", False)
-                status_char = "[X]" if is_done else "[ ]"
+                is_focused = sub_task_details_obj.get("focused", False)
+
+                if is_focused:
+                    status_char = "‼️"
+                elif is_done:
+                    status_char = "✅"
+                else:
+                    status_char = "[ ]"
+
                 prefix = ""
                 item_attr = curses.color_pair(COLOR_PAIR_DEFAULT)
 
@@ -879,7 +912,7 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
 
     try:
         stdscr.attroff(curses.A_BOLD)
-        for i in range(1, 10):
+        for i in range(1, 11):
             stdscr.attroff(curses.color_pair(i))
     except curses.error: pass
     stdscr.refresh()
@@ -897,19 +930,22 @@ def show_notification(stdscr, message):
         stdscr.addstr(notification_line, 0, message_to_show.ljust(width-1 if width > 0 else 0))
         stdscr.attroff(curses.color_pair(COLOR_PAIR_REVERSE))
         stdscr.refresh()
-        curses.napms(500)
+        curses.napms(1500)
         stdscr.addstr(notification_line, 0, " " * (width-1 if width > 0 else 0))
         stdscr.refresh()
     except curses.error: pass
     except Exception: pass
 
 
-def handle_input(data, command_parts, stdscr, current_view_mode, selected_subtask_idx, current_ticket_subtask_list, all_displayable_tickets_for_cmd):
+def handle_input(data, command_parts, stdscr, current_view_mode, selected_subtask_idx, selected_note_idx, current_ticket_subtask_list, all_displayable_tickets_for_cmd):
     if current_view_mode != VIEW_MAIN:
-        if command_parts[0].lower() == 'q':
-            return None
-        if command_parts[0].lower() == 'h': # Allow help toggle from other views too
-            return "TOGGLE_HELP"
+        command = command_parts[0].lower() if command_parts else ""
+        if command == 'q': return None
+        if command == 'h': return "TOGGLE_HELP"
+        
+        if command == 'd' and selected_note_idx != -1:
+            return "DELETE_NOTE"
+
         show_notification(stdscr, t('cmd_exclusively_in_main_view'))
         return "NO_CHANGE"
 
@@ -917,6 +953,15 @@ def handle_input(data, command_parts, stdscr, current_view_mode, selected_subtas
     current_ticket_name_val = data.get("current_ticket")
     data_was_modified = False
     command = command_parts[0].lower()
+    
+    completed_tickets = data.get("completed_tickets", [])
+    all_tickets_set = set()
+    all_tickets_set.update(data.get("sub_tasks", {}).keys())
+    all_tickets_set.update(data.get("notes", {}).keys())
+    for paused_item in data.get("paused_tasks", []):
+        if paused_item.get("ticket"): all_tickets_set.add(paused_item["ticket"])
+    all_known_tickets = sorted(list(filter(None, all_tickets_set)))
+
 
     def pause_current_task(data_dict):
         paused_modified = False
@@ -941,11 +986,27 @@ def handle_input(data, command_parts, stdscr, current_view_mode, selected_subtas
     if command == 'n':
         if len(command_parts) > 1:
             new_task_name_cmd = " ".join(command_parts[1:])
+
+            if new_task_name_cmd.startswith("http:") or new_task_name_cmd.startswith("https:"):
+                show_notification(stdscr, t('cmd_err_project_is_url'))
+                return "NO_CHANGE"
+            
             if data.get("current_ticket") and data.get("current_ticket").lower() == new_task_name_cmd.lower():
                 show_notification(stdscr, t('cmd_err_task_already_active', name=new_task_name_cmd))
                 return "NO_CHANGE"
+
+            # Check if it's a completed task
+            if new_task_name_cmd in data.get("completed_tickets", []):
+                data["completed_tickets"].remove(new_task_name_cmd)
+                pause_current_task(data)
+                data["current_ticket"] = new_task_name_cmd
+                data["task_start_time"] = time.time()
+                data_was_modified = True
+                show_notification(stdscr, t('cmd_info_task_restored', name=new_task_name_cmd))
+                return data
+
             is_existing_ticket = False
-            for t_name in all_displayable_tickets_for_cmd:
+            for t_name in all_known_tickets:
                 if t_name.lower() == new_task_name_cmd.lower():
                     is_existing_ticket = True; break
             if is_existing_ticket:
@@ -953,6 +1014,7 @@ def handle_input(data, command_parts, stdscr, current_view_mode, selected_subtas
                 if is_paused: show_notification(stdscr, t('cmd_err_task_exists_paused', name=new_task_name_cmd))
                 else: show_notification(stdscr, t('cmd_err_task_exists', name=new_task_name_cmd))
                 return "NO_CHANGE"
+            
             pause_modified_by_n = pause_current_task(data)
             data["current_ticket"] = new_task_name_cmd
             data["task_start_time"] = time.time()
@@ -967,12 +1029,14 @@ def handle_input(data, command_parts, stdscr, current_view_mode, selected_subtas
         return "TOGGLE_HELP"
 
     elif command == 'd':
-        if current_ticket_name_val and selected_subtask_idx != -1 and \
-           0 <= selected_subtask_idx < len(current_ticket_subtask_list):
-            sub_task_to_hide_name, _ = current_ticket_subtask_list[selected_subtask_idx]
+        if selected_subtask_idx != -1 and 0 <= selected_subtask_idx < len(current_ticket_subtask_list):
+            sub_task_to_hide_name, sub_task_details = current_ticket_subtask_list[selected_subtask_idx]
             if current_ticket_name_val in data.get("sub_tasks", {}) and \
                sub_task_to_hide_name in data["sub_tasks"][current_ticket_name_val]:
                 data["sub_tasks"][current_ticket_name_val][sub_task_to_hide_name]["hidden"] = True
+                if sub_task_details.get("focused"):
+                    data["sub_tasks"][current_ticket_name_val][sub_task_to_hide_name]["focused"] = False
+                    data["focused_subtask"] = None # Clear global focus if this was the one
                 data_was_modified = True
                 show_notification(stdscr, t('cmd_info_subtask_hidden', name=sub_task_to_hide_name))
             else:
@@ -987,7 +1051,7 @@ def handle_input(data, command_parts, stdscr, current_view_mode, selected_subtas
             sub_task_name_cmd = " ".join(command_parts[1:])
             current_ticket_subtasks = data.setdefault("sub_tasks", {}).setdefault(current_ticket_name_val, {})
             if sub_task_name_cmd not in current_ticket_subtasks:
-                current_ticket_subtasks[sub_task_name_cmd] = {"done": False, "notes": [], "hidden": False, "pr_url": None, "pr_status": None}
+                current_ticket_subtasks[sub_task_name_cmd] = {"done": False, "notes": [], "hidden": False, "pr_url": None, "pr_status": None, "focused": False}
                 data_was_modified = True
             else:
                 show_notification(stdscr, t('cmd_err_subtask_exists', name=sub_task_name_cmd))
@@ -1015,25 +1079,108 @@ def handle_input(data, command_parts, stdscr, current_view_mode, selected_subtas
         return data if data_was_modified else "NO_CHANGE"
 
     elif command == 'x':
-        if current_ticket_name_val and data.get("task_start_time") is not None:
-            try:
-                end_time = time.time(); start_time = data["task_start_time"]
-                if not isinstance(start_time, (int, float)): raise ValueError("Invalid start time")
-                elapsed_time = end_time - start_time
-                tasks_done = data.setdefault("tasks_done", {})
-                ticket_done_details = tasks_done.setdefault(current_ticket_name_val, {"total_time": 0})
-                if not isinstance(ticket_done_details["total_time"], (int, float)): ticket_done_details["total_time"] = 0
-                ticket_done_details["total_time"] += elapsed_time
-                del data["task_start_time"]; data["current_ticket"] = None; data_was_modified = True
-                show_notification(stdscr, t('cmd_info_task_completed'))
-            except (ValueError, TypeError) as e:
-                show_notification(stdscr, t('cmd_err_time_processing', e=e))
-                if "task_start_time" in data: del data["task_start_time"]
-                data["current_ticket"] = None; data_was_modified = True
-        elif not current_ticket_name_val: show_notification(stdscr, t('cmd_err_no_active_task_to_complete'))
+        if current_ticket_name_val:
+            if current_ticket_name_val not in data.get("completed_tickets", []):
+                data.setdefault("completed_tickets", []).append(current_ticket_name_val)
+            if data.get("focused_ticket") == current_ticket_name_val:
+                data["focused_ticket"] = None
+                data["focused_subtask"] = None
+            data["current_ticket"] = None
+            if "task_start_time" in data:
+                del data["task_start_time"]
+            data_was_modified = True
+            show_notification(stdscr, t('cmd_info_task_completed_and_hidden', name=current_ticket_name_val))
         else:
-            show_notification(stdscr, t('cmd_err_timer_not_running'))
-            if data.get("current_ticket") is not None: data["current_ticket"] = None; data_was_modified = True
+            show_notification(stdscr, t('cmd_err_no_active_task_to_complete'))
+    
+    elif command == 'f':
+        if current_ticket_name_val and selected_subtask_idx != -1 and \
+           0 <= selected_subtask_idx < len(current_ticket_subtask_list):
+            sub_task_name, sub_task_details = current_ticket_subtask_list[selected_subtask_idx]
+            is_currently_focused = sub_task_details.get("focused", False)
+
+            # Unfocus all other subtasks in the current ticket
+            for st_name, st_details in data["sub_tasks"][current_ticket_name_val].items():
+                st_details["focused"] = False
+            
+            # Toggle focus for the selected subtask
+            data["sub_tasks"][current_ticket_name_val][sub_task_name]["focused"] = not is_currently_focused
+            
+            if not is_currently_focused: # If it's now focused
+                data["focused_ticket"] = current_ticket_name_val
+                data["focused_subtask"] = sub_task_name
+                show_notification(stdscr, t('cmd_info_subtask_focus_set', name=sub_task_name))
+            else: # If it's now unfocused
+                data["focused_ticket"] = None
+                data["focused_subtask"] = None
+                show_notification(stdscr, t('cmd_info_focus_cleared'))
+
+            data_was_modified = True
+        else:
+            show_notification(stdscr, t('cmd_prompt_select_subtask_for_focus'))
+
+    elif command == 'focus':
+        if len(command_parts) > 1:
+            identifier = " ".join(command_parts[1:])
+            target_ticket = None
+            target_subtask = None
+
+            # First, search for a subtask
+            found_subtasks = []
+            for ticket_name, subtasks in data.get("sub_tasks", {}).items():
+                if ticket_name in completed_tickets: continue
+                for st_name, st_details in subtasks.items():
+                    if identifier.lower() in st_name.lower():
+                        found_subtasks.append((ticket_name, st_name))
+            
+            if len(found_subtasks) == 1:
+                target_ticket, target_subtask = found_subtasks[0]
+            elif len(found_subtasks) > 1:
+                show_notification(stdscr, t('cmd_err_multiple_subtasks_found', options=", ".join([st for _, st in found_subtasks])))
+                return "NO_CHANGE"
+            
+            # If no subtask found, search for a main ticket
+            if not target_ticket:
+                try:
+                    idx = int(identifier) - 1
+                    if 0 <= idx < len(all_displayable_tickets_for_cmd):
+                        target_ticket = all_displayable_tickets_for_cmd[idx]
+                except ValueError:
+                    matches = [t_name for t_name in all_displayable_tickets_for_cmd if identifier.lower() in t_name.lower()]
+                    if len(matches) == 1:
+                        target_ticket = matches[0]
+                    elif len(matches) > 1:
+                        show_notification(stdscr, t('cmd_err_multiple_tickets_found', options=", ".join(matches)))
+                        return "NO_CHANGE"
+            
+            if target_ticket:
+                # Clear all previous focuses
+                data["focused_ticket"] = None
+                data["focused_subtask"] = None
+                for ticket_subtasks in data["sub_tasks"].values():
+                    for st in ticket_subtasks.values():
+                        st["focused"] = False
+                
+                # Set new focus
+                data["focused_ticket"] = target_ticket
+                if target_subtask:
+                    data["sub_tasks"][target_ticket][target_subtask]["focused"] = True
+                    data["focused_subtask"] = target_subtask
+                
+                data_was_modified = True
+                show_notification(stdscr, t('cmd_info_focus_set', name=target_ticket))
+            else:
+                show_notification(stdscr, t('cmd_err_ticket_not_found', name=identifier))
+        else:
+            # Clear focus if command is just 'focus'
+            data["focused_ticket"] = None
+            data["focused_subtask"] = None
+            for ticket_subtasks in data["sub_tasks"].values():
+                for st in ticket_subtasks.values():
+                    st["focused"] = False
+            data_was_modified = True
+            show_notification(stdscr, t('cmd_info_focus_cleared'))
+
 
     elif command == 'note':
         if not current_ticket_name_val:
@@ -1135,9 +1282,9 @@ def handle_input(data, command_parts, stdscr, current_view_mode, selected_subtas
                     if isinstance(resumed_sub_tasks_raw, dict):
                         for sub_name, sub_details in resumed_sub_tasks_raw.items():
                             if not isinstance(sub_details, dict):
-                                migrated_resumed_sub_tasks[sub_name] = {"done": bool(sub_details), "notes": [], "hidden": False, "pr_url": None, "pr_status": None}
+                                migrated_resumed_sub_tasks[sub_name] = {"done": bool(sub_details), "notes": [], "hidden": False, "pr_url": None, "pr_status": None, "focused": False}
                             else:
-                                sub_details.setdefault("done", False); sub_details.setdefault("notes", []); sub_details.setdefault("hidden", False); sub_details.setdefault("pr_url", None); sub_details.setdefault("pr_status", None)
+                                sub_details.setdefault("done", False); sub_details.setdefault("notes", []); sub_details.setdefault("hidden", False); sub_details.setdefault("pr_url", None); sub_details.setdefault("pr_status", None); sub_details.setdefault("focused", False)
                                 migrated_resumed_sub_tasks[sub_name] = sub_details
                     data.setdefault("sub_tasks", {})[target_ticket_name_to_activate] = migrated_resumed_sub_tasks
                     data.setdefault("notes", {})[target_ticket_name_to_activate] = resumed_item_details.get('notes', [])
@@ -1149,9 +1296,9 @@ def handle_input(data, command_parts, stdscr, current_view_mode, selected_subtas
                 current_subs = data.setdefault("sub_tasks", {}).setdefault(target_ticket_name_to_activate, {})
                 for sub_name, sub_details in list(current_subs.items()):
                     if not isinstance(sub_details, dict):
-                        current_subs[sub_name] = {"done": bool(sub_details), "notes": [], "hidden": False, "pr_url": None, "pr_status": None}
+                        current_subs[sub_name] = {"done": bool(sub_details), "notes": [], "hidden": False, "pr_url": None, "pr_status": None, "focused": False}
                     else:
-                        sub_details.setdefault("done", False); sub_details.setdefault("notes", []); sub_details.setdefault("hidden", False); sub_details.setdefault("pr_url", None); sub_details.setdefault("pr_status", None)
+                        sub_details.setdefault("done", False); sub_details.setdefault("notes", []); sub_details.setdefault("hidden", False); sub_details.setdefault("pr_url", None); sub_details.setdefault("pr_status", None); sub_details.setdefault("focused", False)
 
                 data.setdefault("notes", {}).setdefault(target_ticket_name_to_activate, [])
             data_was_modified = True
@@ -1200,7 +1347,7 @@ def poll_pull_requests(data_lock, data_ref, config):
                     if original_subtask.get("hidden") or not pr_url or pr_status == 'merged':
                         continue
 
-                    api_url = convert_to_api_url(pr_url)
+                    api_url = convert_to_api_url(pr_url, config)
                     if not api_url: continue
 
                     headers = {"Authorization": f"Bearer {api_token}", "Accept": "application/json;charset=UTF-8"}
@@ -1271,8 +1418,7 @@ def poll_pull_requests(data_lock, data_ref, config):
 
         time.sleep(300)
 
-def convert_to_api_url(pr_url):
-    config = load_config()
+def convert_to_api_url(pr_url, config):
     match = re.search(r'projects/(?P<projectKey>[^/]+)/repos/(?P<repositorySlug>[^/]+)/pull-requests/(?P<pullRequestId>\d+)', pr_url)
     if match:
         parts = match.groupdict()
@@ -1297,7 +1443,7 @@ def check_for_unhandled_comments(activities, my_user_id):
 def event_notification_poller(data_lock, data_ref, config):
     """A thread that checks for upcoming events and sends notifications."""
     global sent_notifications
-
+    
     def get_next_occurrence(recurring_event, now):
         """Calculates the next occurrence of a recurring event."""
         try:
@@ -1311,7 +1457,7 @@ def event_notification_poller(data_lock, data_ref, config):
                 days_ahead += 7
             elif days_ahead == 0 and now.time() >= event_time: # Target is today, but time has passed
                 days_ahead += 7
-
+            
             next_date = (now + timedelta(days=days_ahead)).date()
             return datetime.combine(next_date, event_time)
         except (ValueError, KeyError, TypeError):
@@ -1335,7 +1481,7 @@ def event_notification_poller(data_lock, data_ref, config):
 
     while True:
         now = datetime.now()
-
+        
         if now.hour == 0 and now.minute == 0: # Daily reset
             sent_notifications.clear()
 
@@ -1345,7 +1491,7 @@ def event_notification_poller(data_lock, data_ref, config):
             meetings = copy.deepcopy(data_ref.get("meetings", []))
             interruptions = copy.deepcopy(data_ref.get("interruptions", []))
             recurring = copy.deepcopy(data_ref.get("recurring_events", []))
-
+        
         # Process one-time events
         for event in meetings + interruptions:
             try:
@@ -1356,7 +1502,7 @@ def event_notification_poller(data_lock, data_ref, config):
                     all_upcoming_events.append({'datetime': dt, 'type': evt_type, 'details': details, 'recurring': False})
             except (ValueError, TypeError):
                 continue
-
+        
         # Process recurring events
         for event in recurring:
             next_occurrence = get_next_occurrence(event, now)
@@ -1373,13 +1519,13 @@ def event_notification_poller(data_lock, data_ref, config):
             time_diff = event['datetime'] - now
             if timedelta(seconds=0) <= time_diff < timedelta(minutes=11):
                 minutes_until = int(time_diff.total_seconds() / 60)
-
+                
                 event_time_str = event['datetime'].strftime('%H:%M')
                 event_id = f"{event['type']}_{event['details']}_{event['datetime'].strftime('%Y%m%d%H%M')}"
-
+                
                 notification_title = ""
                 notification_body = ""
-
+                
                 if event['type'] == 'meeting':
                     rec_str = f"({t('recurring')}) " if event['recurring'] else ""
                     notification_title = t('notification_meeting_title', rec=rec_str, min=minutes_until, time=event_time_str)
@@ -1407,15 +1553,15 @@ def event_notification_poller(data_lock, data_ref, config):
 
 
 def main(stdscr):
-    global COLOR_PAIR_DEFAULT, COLOR_PAIR_REVERSE, COLOR_PAIR_GREY, COLOR_PAIR_PAUSED, COLOR_PAIR_SELECTED, COLOR_PAIR_TASK_ALL_SUBTASKS_DONE, COLOR_PAIR_URGENT_BOX, COLOR_PAIR_PR_UNHANDLED, COLOR_PAIR_PR_APPROVED
-
+    global COLOR_PAIR_DEFAULT, COLOR_PAIR_REVERSE, COLOR_PAIR_GREY, COLOR_PAIR_PAUSED, COLOR_PAIR_SELECTED, COLOR_PAIR_TASK_ALL_SUBTASKS_DONE, COLOR_PAIR_URGENT_BOX, COLOR_PAIR_PR_UNHANDLED, COLOR_PAIR_PR_APPROVED, COLOR_PAIR_FOCUSED
+    
     config = load_config()
     load_translations(config.get("LANGUAGE", "fi"))
-
+    
     if not STRINGS:
         print(f"Fatal: Could not load language files. Exiting.", file=sys.stderr)
         return
-
+    
     if config.get("API_TOKEN") == "PASTE_YOUR_BEARER_TOKEN_HERE":
         print("ERROR: API_TOKEN has not been set in config.json. Please update it and restart.", file=sys.stderr)
         return
@@ -1433,16 +1579,19 @@ def main(stdscr):
             curses.init_pair(COLOR_PAIR_URGENT_BOX, curses.COLOR_RED, bg)
             curses.init_pair(COLOR_PAIR_PR_UNHANDLED, curses.COLOR_WHITE, curses.COLOR_RED)
             curses.init_pair(COLOR_PAIR_PR_APPROVED, curses.COLOR_BLACK, curses.COLOR_GREEN)
+            curses.init_pair(COLOR_PAIR_FOCUSED, curses.COLOR_BLACK, curses.COLOR_YELLOW)
         except:
             curses.init_pair(COLOR_PAIR_SELECTED, curses.COLOR_BLACK, curses.COLOR_GREEN)
             curses.init_pair(COLOR_PAIR_TASK_ALL_SUBTASKS_DONE, curses.COLOR_RED, bg)
             curses.init_pair(COLOR_PAIR_URGENT_BOX, curses.COLOR_MAGENTA, bg)
             curses.init_pair(COLOR_PAIR_PR_UNHANDLED, curses.COLOR_BLACK, curses.COLOR_RED)
             curses.init_pair(COLOR_PAIR_PR_APPROVED, curses.COLOR_WHITE, curses.COLOR_GREEN)
+            curses.init_pair(COLOR_PAIR_FOCUSED, curses.COLOR_BLACK, curses.COLOR_YELLOW)
+
     except curses.error:
-        COLOR_PAIR_DEFAULT=0; COLOR_PAIR_REVERSE=0; COLOR_PAIR_GREY=0; COLOR_PAIR_PAUSED=0; COLOR_PAIR_SELECTED=0; COLOR_PAIR_TASK_ALL_SUBTASKS_DONE=0; COLOR_PAIR_URGENT_BOX=0; COLOR_PAIR_PR_UNHANDLED=0; COLOR_PAIR_PR_APPROVED=0
+        COLOR_PAIR_DEFAULT=0; COLOR_PAIR_REVERSE=0; COLOR_PAIR_GREY=0; COLOR_PAIR_PAUSED=0; COLOR_PAIR_SELECTED=0; COLOR_PAIR_TASK_ALL_SUBTASKS_DONE=0; COLOR_PAIR_URGENT_BOX=0; COLOR_PAIR_PR_UNHANDLED=0; COLOR_PAIR_PR_APPROVED=0; COLOR_PAIR_FOCUSED=0
     except Exception:
-        COLOR_PAIR_DEFAULT=0; COLOR_PAIR_REVERSE=0; COLOR_PAIR_GREY=0; COLOR_PAIR_PAUSED=0; COLOR_PAIR_SELECTED=0; COLOR_PAIR_TASK_ALL_SUBTASKS_DONE=0; COLOR_PAIR_URGENT_BOX=0; COLOR_PAIR_PR_UNHANDLED=0; COLOR_PAIR_PR_APPROVED=0
+        COLOR_PAIR_DEFAULT=0; COLOR_PAIR_REVERSE=0; COLOR_PAIR_GREY=0; COLOR_PAIR_PAUSED=0; COLOR_PAIR_SELECTED=0; COLOR_PAIR_TASK_ALL_SUBTASKS_DONE=0; COLOR_PAIR_URGENT_BOX=0; COLOR_PAIR_PR_UNHANDLED=0; COLOR_PAIR_PR_APPROVED=0; COLOR_PAIR_FOCUSED=0
 
     try: curses.curs_set(1)
     except curses.error: pass
@@ -1486,6 +1635,7 @@ def main(stdscr):
         with data_lock:
             ticket_name_at_loop_start = data.get("current_ticket")
 
+            completed_tickets = data.get("completed_tickets", [])
             current_ticket_subtasks_unfiltered = data.get("sub_tasks", {}).get(ticket_name_at_loop_start, {}) if ticket_name_at_loop_start else {}
             current_ticket_subtask_list_visible = []
             if isinstance(current_ticket_subtasks_unfiltered, dict):
@@ -1500,7 +1650,9 @@ def main(stdscr):
             all_tickets_set_for_cmd.update(data.get("notes", {}).keys())
             for paused_item_cmd in data.get("paused_tasks", []):
                 if paused_item_cmd.get("ticket"): all_tickets_set_for_cmd.add(paused_item_cmd["ticket"])
-            all_displayable_tickets_for_handle_input = sorted(list(filter(None, all_tickets_set_for_cmd)))
+            
+            all_displayable_tickets_for_handle_input = sorted([t for t in list(filter(None, all_tickets_set_for_cmd)) if t not in completed_tickets])
+
 
         key = -1
         try: key = stdscr.get_wch()
@@ -1545,19 +1697,13 @@ def main(stdscr):
                     command_buffer = ""; request_full_redraw = True; selected_note_index = -1
                 elif key == curses.KEY_UP:
                     if current_ticket_subtask_list_visible:
-                        if selected_subtask_index == -1 and len(current_ticket_subtask_list_visible) > 0:
-                            selected_subtask_index = len(current_ticket_subtask_list_visible) - 1
-                        elif selected_subtask_index > 0:
+                        if selected_subtask_index > -1:
                             selected_subtask_index -= 1
-                        else:
-                            selected_subtask_index = -1
                         request_full_redraw = True
                 elif key == curses.KEY_DOWN:
                     if current_ticket_subtask_list_visible:
                         if selected_subtask_index < len(current_ticket_subtask_list_visible) - 1:
                             selected_subtask_index += 1
-                        else:
-                            selected_subtask_index = -1
                         request_full_redraw = True
                 elif key == '\n' or key == curses.KEY_ENTER:
                     cmd_parts = command_buffer.split()
@@ -1567,7 +1713,7 @@ def main(stdscr):
                     if cmd_parts:
                         with data_lock:
                             original_ticket = data.get("current_ticket")
-                            handle_result = handle_input(data, cmd_parts, stdscr, current_view, selected_subtask_index, current_ticket_subtask_list_visible, all_displayable_tickets_for_handle_input)
+                            handle_result = handle_input(data, cmd_parts, stdscr, current_view, selected_subtask_index, selected_note_index, current_ticket_subtask_list_visible, all_displayable_tickets_for_handle_input)
                         if handle_result is None: break
                         elif handle_result == "TOGGLE_HELP": show_help_footer = not show_help_footer
                         elif handle_result != "NO_CHANGE":
@@ -1578,12 +1724,17 @@ def main(stdscr):
                                 save_data(data)
                         action_processed = True
                     elif selected_subtask_index != -1 and 0 <= selected_subtask_index < len(current_ticket_subtask_list_visible):
-                        sub_task_name, _ = current_ticket_subtask_list_visible[selected_subtask_index]
+                        sub_task_name, sub_task_details = current_ticket_subtask_list_visible[selected_subtask_index]
                         with data_lock:
                             main_ticket = data.get("current_ticket")
                             sub_task = data["sub_tasks"][main_ticket].get(sub_task_name)
                             if sub_task:
                                 sub_task["done"] = not sub_task["done"]
+                                # Auto-unfocus if marked done
+                                if sub_task["done"] and sub_task.get("focused"):
+                                    sub_task["focused"] = False
+                                    data["focused_subtask"] = None
+                                    data["focused_ticket"] = None
                                 save_data(data)
                         action_processed = True
 
@@ -1609,38 +1760,69 @@ def main(stdscr):
                         request_full_redraw = True
 
             elif current_view in [VIEW_DEDICATED_NOTES, VIEW_DAILY_NOTES]:
-                notes_list_ref = []
-                if current_view == VIEW_DEDICATED_NOTES and entity_for_dedicated_notes:
-                    ent_type = entity_for_dedicated_notes.get("type")
-                    ent_name = entity_for_dedicated_notes.get("name")
-                    if ent_type == "task":
-                        notes_list_ref = data.get("notes", {}).get(ent_name, [])
-                    elif ent_type == "subtask":
-                        main_task = entity_for_dedicated_notes.get("main_task_name")
-                        sub_details = data.get("sub_tasks",{}).get(main_task,{}).get(ent_name)
-                        if sub_details: notes_list_ref = sub_details.get("notes", [])
-                elif current_view == VIEW_DAILY_NOTES:
-                    date_iso = current_date_for_daily_notes.isoformat()
-                    notes_list_ref = data.get("daily_notes", {}).get(date_iso, [])
+                notes_list_size = 0
+                with data_lock:
+                    if current_view == VIEW_DEDICATED_NOTES and entity_for_dedicated_notes:
+                        ent_type = entity_for_dedicated_notes.get("type")
+                        ent_name = entity_for_dedicated_notes.get("name")
+                        if ent_type == "task":
+                            notes_list_size = len(data.get("notes", {}).get(ent_name, []))
+                        elif ent_type == "subtask":
+                            main_task = entity_for_dedicated_notes.get("main_task_name")
+                            sub_details = data.get("sub_tasks",{}).get(main_task,{}).get(ent_name)
+                            if sub_details: notes_list_size = len(sub_details.get("notes", []))
+                    elif current_view == VIEW_DAILY_NOTES:
+                        date_iso = current_date_for_daily_notes.isoformat()
+                        notes_list_size = len(data.get("daily_notes", {}).get(date_iso, []))
 
                 if key == curses.KEY_UP:
-                    if notes_list_ref:
-                        selected_note_index = (selected_note_index - 1) % len(notes_list_ref)
+                    if selected_note_index > -1:
+                        selected_note_index -= 1
                     request_full_redraw = True
                 elif key == curses.KEY_DOWN:
-                    if notes_list_ref:
-                        selected_note_index = (selected_note_index + 1) % len(notes_list_ref)
+                    if notes_list_size > 0 and selected_note_index < notes_list_size - 1:
+                        selected_note_index += 1
                     request_full_redraw = True
-                elif key in (ord('d'), ord('D')):
-                    if notes_list_ref and 0 <= selected_note_index < len(notes_list_ref):
+                elif key == '\n' or key == curses.KEY_ENTER:
+                    cmd_parts = command_buffer.split()
+                    if cmd_parts and cmd_parts[0].lower() == 'd' and selected_note_index != -1:
+                         if 0 <= selected_note_index < notes_list_size:
+                            with data_lock:
+                                if current_view == VIEW_DEDICATED_NOTES:
+                                    ent_type = entity_for_dedicated_notes.get("type")
+                                    ent_name = entity_for_dedicated_notes.get("name")
+                                    if ent_type == "task":
+                                        data["notes"][ent_name].pop(selected_note_index)
+                                    elif ent_type == "subtask":
+                                        main_task = entity_for_dedicated_notes.get("main_task_name")
+                                        data["sub_tasks"][main_task][ent_name]["notes"].pop(selected_note_index)
+                                elif current_view == VIEW_DAILY_NOTES:
+                                    date_iso = current_date_for_daily_notes.isoformat()
+                                    data["daily_notes"][date_iso].pop(selected_note_index)
+                                save_data(data)
+                            
+                            new_size = notes_list_size - 1
+                            if selected_note_index >= new_size and new_size > 0:
+                               selected_note_index = new_size - 1
+                            elif new_size <= 0:
+                                selected_note_index = -1
+                    elif command_buffer.strip():
                         with data_lock:
-                            notes_list_ref.pop(selected_note_index)
+                            if current_view == VIEW_DEDICATED_NOTES and entity_for_dedicated_notes:
+                                ent_type = entity_for_dedicated_notes.get("type")
+                                ent_name = entity_for_dedicated_notes.get("name")
+                                if ent_type == "task":
+                                    data.setdefault("notes",{}).setdefault(ent_name,[]).append(command_buffer)
+                                elif ent_type == "subtask":
+                                    main_task = entity_for_dedicated_notes.get("main_task_name")
+                                    sub_details = data.get("sub_tasks",{}).get(main_task,{}).get(ent_name)
+                                    if sub_details:
+                                        sub_details.setdefault("notes",[]).append(command_buffer)
+                            elif current_view == VIEW_DAILY_NOTES:
+                                date_iso = current_date_for_daily_notes.isoformat()
+                                data.setdefault("daily_notes", {}).setdefault(date_iso, []).append(command_buffer)
                             save_data(data)
-                        if selected_note_index >= len(notes_list_ref) and notes_list_ref:
-                           selected_note_index = len(notes_list_ref) - 1
-                        elif not notes_list_ref:
-                            selected_note_index = -1
-                    request_full_redraw = True
+                    command_buffer = ""; request_full_redraw = True
                 elif key == curses.KEY_LEFT and current_view == VIEW_DAILY_NOTES:
                     current_date_for_daily_notes -= timedelta(days=1)
                     command_buffer = ""; selected_note_index = -1; request_full_redraw = True
@@ -1650,12 +1832,6 @@ def main(stdscr):
                         current_date_for_daily_notes = date.today()
                         current_view = VIEW_MAIN
                     command_buffer = ""; selected_note_index = -1; request_full_redraw = True
-                elif key == '\n' or key == curses.KEY_ENTER:
-                    if command_buffer.strip():
-                        with data_lock:
-                            notes_list_ref.append(command_buffer)
-                            save_data(data)
-                    command_buffer = ""; request_full_redraw = True
                 elif isinstance(key, str) and key.isprintable():
                     command_buffer += key
                     request_full_redraw = True
@@ -1663,7 +1839,7 @@ def main(stdscr):
                     command_buffer = command_buffer[:-1]
                     request_full_redraw = True
 
-            # FIX: Redraw the UI after every valid keypress.
+            # Redraw the UI after every valid keypress.
             request_full_redraw = True
             last_content_refresh_time = 0
             display_ui(stdscr, data, command_buffer, request_full_redraw, selected_subtask_index, current_view, entity_for_dedicated_notes, current_ticket_subtask_list_visible, show_help_footer, current_date_for_daily_notes, selected_note_index)
@@ -1672,7 +1848,7 @@ def main(stdscr):
         if not user_activity_caused_draw_this_cycle:
             if current_time - last_content_refresh_time >= content_refresh_interval:
                 request_full_redraw = True
-
+            
             if request_full_redraw or (current_time - last_clock_refresh_time >= clock_refresh_interval):
                 display_ui(stdscr, data, command_buffer, request_full_redraw, selected_subtask_index, current_view, entity_for_dedicated_notes, current_ticket_subtask_list_visible, show_help_footer, current_date_for_daily_notes, selected_note_index)
                 last_clock_refresh_time = current_time
