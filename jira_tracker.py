@@ -2,12 +2,14 @@ import curses
 import time
 import threading
 import os
+import sys
 import copy
-from config_manager import load_config, load_translations, t, config
-from ui_display import display_ui, show_notification
+from datetime import date
+from config_manager import load_config, load_translations, t
+from ui_display import display_ui
 from command_handler import handle_input
 from jira_api import get_and_save_jira_session, jira_data_poller
-from polling import poll_pull_requests, event_notification_poller
+from polling import poll_pull_requests, event_notification_poller, poll_reviews_needed
 
 # --- Global State ---
 app_data = {}
@@ -16,6 +18,9 @@ permanent_notifications = []
 jira_cache = {}
 jira_cache_lock = threading.Lock()
 sent_notifications = set()
+reviews_for_display = []
+reviews_lock = threading.Lock()
+sent_review_notifications = set()
 
 DATA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jira_data.json")
 
@@ -24,7 +29,7 @@ def load_data():
     try:
         with open(DATA_FILE, 'r', encoding='utf-8') as f: app_data = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError): app_data = {}
-    
+
     app_data.setdefault("current_ticket", None)
     app_data.setdefault("focused_ticket", None)
     app_data.setdefault("focused_subtask", None)
@@ -37,7 +42,7 @@ def load_data():
     app_data.setdefault("paused_tasks", [])
     app_data.setdefault("recurring_events", [])
     app_data.setdefault("daily_notes", {})
-    
+
     for project_tasks in app_data.get("sub_tasks", {}).values():
         if isinstance(project_tasks, dict):
             for task_details in project_tasks.values():
@@ -57,8 +62,7 @@ def main(stdscr):
     curses.curs_set(1)
     stdscr.nodelay(True)
     stdscr.keypad(True)
-    
-    # Initialize colors
+
     try:
         curses.start_color()
         curses.init_pair(1, curses.COLOR_WHITE, curses.COLOR_BLACK)
@@ -72,16 +76,15 @@ def main(stdscr):
         curses.init_pair(9, curses.COLOR_BLACK, curses.COLOR_GREEN)
         curses.init_pair(10, curses.COLOR_BLACK, curses.COLOR_YELLOW)
         curses.init_pair(11, curses.COLOR_YELLOW, curses.COLOR_RED)
-    except:
-        pass
+    except: pass
 
     load_data()
-    
-    # Start background threads
+
     threading.Thread(target=poll_pull_requests, args=(app_data, data_lock, save_data, permanent_notifications), daemon=True).start()
     threading.Thread(target=jira_data_poller, args=(app_data, data_lock, jira_cache, jira_cache_lock, permanent_notifications), daemon=True).start()
     threading.Thread(target=event_notification_poller, args=(app_data, data_lock, sent_notifications), daemon=True).start()
-    
+    threading.Thread(target=poll_reviews_needed, args=(reviews_for_display, reviews_lock, sent_review_notifications), daemon=True).start()
+
     command_buffer = ""
     request_full_redraw = True
     selected_subtask_idx = -1
@@ -96,13 +99,14 @@ def main(stdscr):
         if time.time() - last_refresh > 1.0:
             request_full_redraw = True
             last_refresh = time.time()
-            
+
         if request_full_redraw:
             with data_lock:
-                display_ui(stdscr, app_data, command_buffer, full_redraw=True, selected_subtask_idx=selected_subtask_idx, 
+                display_ui(stdscr, app_data, command_buffer, full_redraw=True, selected_subtask_idx=selected_subtask_idx,
                            current_view_mode=current_view, entity_for_dedicated_notes=entity_for_notes,
-                           show_help_footer=show_help, current_date_for_daily_notes_arg=daily_notes_date, 
-                           selected_note_idx=selected_note_idx, permanent_notifications=permanent_notifications)
+                           show_help_footer=show_help, current_date_for_daily_notes_arg=daily_notes_date,
+                           selected_note_idx=selected_note_idx, permanent_notifications=permanent_notifications,
+                           pull_requests_for_review=reviews_for_display)
             request_full_redraw = False
 
         try:
@@ -113,7 +117,6 @@ def main(stdscr):
         if key != -1:
             if key in [curses.KEY_ENTER, 10, 13]:
                 with data_lock:
-                    # Collect all necessary arguments for handle_input
                     current_project = app_data.get("current_ticket")
                     visible_tasks = []
                     if current_project:

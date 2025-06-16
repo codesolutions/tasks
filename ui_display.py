@@ -1,13 +1,36 @@
 import curses
-from datetime import datetime, date
-from config_manager import t
+from datetime import datetime, date, timedelta
+from config_manager import t, SCRIPT_DIR
 from jira_api import jira_cache, jira_cache_lock
+import os
 
 # --- Color Pairs (defined in main app, used here) ---
 (COLOR_PAIR_DEFAULT, COLOR_PAIR_REVERSE, COLOR_PAIR_GREY, COLOR_PAIR_PAUSED,
  COLOR_PAIR_SELECTED, COLOR_PAIR_TASK_ALL_SUBTASKS_DONE, COLOR_PAIR_URGENT_BOX,
  COLOR_PAIR_PR_UNHANDLED, COLOR_PAIR_PR_APPROVED, COLOR_PAIR_FOCUSED,
  COLOR_PAIR_PERMANENT_NOTIFICATION) = range(1, 12)
+
+JIRA_BOX_FILE = os.path.join(SCRIPT_DIR, "jira_box2.txt")
+
+def format_subtask_for_title(subtask_name):
+    """Extracts the last part of a URL-like subtask name for a cleaner title."""
+    if subtask_name.startswith("http"):
+        try:
+            return [part for part in subtask_name.split('/') if part][-1]
+        except IndexError:
+            return subtask_name
+    return subtask_name
+
+def read_jira_box_content(max_lines=10):
+    """Reads content from the jira_box2.txt file."""
+    try:
+        with open(JIRA_BOX_FILE, 'r', encoding='utf-8') as f:
+            lines = [line.rstrip('\n') for line in f.readlines()]
+            return lines[:max_lines]
+    except FileNotFoundError:
+        return []
+    except Exception:
+        return []
 
 def format_timedelta_minutes(delta):
     if not isinstance(delta, timedelta): return ""
@@ -22,30 +45,32 @@ def format_timedelta_minutes(delta):
     time_str = " ".join(parts)
     return t('time_ago', time_str=time_str) if is_past else t('time_in', time_str=time_str)
 
-def _draw_wrapped_text(stdscr, text_to_draw, start_row, start_col, max_width_for_text_line, effective_content_width, content_height_obj, prefix="", subsequent_indent_offset=0, attr=0):
+def _draw_wrapped_text(stdscr, text_to_draw, start_row, start_col,
+                       max_width_for_text_line,
+                       effective_content_width,
+                       content_height_obj,
+                       prefix="", subsequent_indent_offset=0, attr=0):
     lines_used_for_item = 0
     if not text_to_draw or content_height_obj[0] <= 0: return 0
-    
-    remaining_text = str(text_to_draw) # Ensure text is a string
+
+    remaining_text = str(text_to_draw)
     current_line_y = start_row
     max_h, max_w = stdscr.getmaxyx()
-    
+
     def draw_line(y, x, content, attr):
         if y < max_h and x < max_w:
             stdscr.addstr(y, x, content[:max_w-x], attr)
 
-    # First line
-    if current_line_y < max_h -1:
+    if current_line_y < max_h - 1:
         full_first_line = prefix + remaining_text
         text_on_first_line = full_first_line[:max_width_for_text_line]
         draw_line(current_line_y, start_col, text_on_first_line, attr)
-        
+
         lines_used_for_item += 1
         content_height_obj[0] -= 1
         remaining_text = remaining_text[max(0, len(text_on_first_line) - len(prefix)):]
         current_line_y += 1
-    
-    # Subsequent lines
+
     wrapped_line_start_col = start_col + subsequent_indent_offset
     max_width_for_wrapped = effective_content_width - wrapped_line_start_col
     while remaining_text and content_height_obj[0] > 0 and current_line_y < max_h -1:
@@ -56,14 +81,14 @@ def _draw_wrapped_text(stdscr, text_to_draw, start_row, start_col, max_width_for
         content_height_obj[0] -= 1
         remaining_text = remaining_text[len(segment):]
         current_line_y += 1
-        
+
     return lines_used_for_item
 
 def display_dedicated_notes_view(stdscr, data, command_buffer, entity_for_notes, selected_note_idx):
     height, width = stdscr.getmaxyx()
     now_time_str = datetime.now().strftime("%H:%M:%S")
     stdscr.clear()
-    
+
     row = 0
     stdscr.addstr(row, 0, t('ui_clock', now_time_str=now_time_str))
     row += 1
@@ -98,7 +123,7 @@ def display_dedicated_notes_view(stdscr, data, command_buffer, entity_for_notes,
 
     for idx, note_text in enumerate(notes_list_to_display):
         if content_height_obj[0] <= 0: break
-        
+
         prefix = f"> {idx+1}. " if idx == selected_note_idx else f"  {idx+1}. "
         attr = curses.color_pair(COLOR_PAIR_SELECTED) if idx == selected_note_idx else curses.color_pair(COLOR_PAIR_DEFAULT)
         lines_used = _draw_wrapped_text(stdscr, note_text, row, 0, width-2, width, content_height_obj, prefix=prefix, subsequent_indent_offset=len(prefix), attr=attr)
@@ -131,7 +156,7 @@ def display_daily_notes_view(stdscr, data, command_buffer, current_date_for_note
     weekday_str = t('weekdays')[current_date_for_notes.weekday()]
     title = t('daily_notes_header', date=date_str_iso, weekday=weekday_str)
     notes_list = data.get("daily_notes", {}).get(date_str_iso, [])
-    
+
     stdscr.addstr(row, 0, title[:width-1])
     row +=1
     stdscr.addstr(row, 0, "-" * min(len(title), width-1))
@@ -143,37 +168,46 @@ def display_daily_notes_view(stdscr, data, command_buffer, current_date_for_note
 
     for idx, note_text in enumerate(notes_list):
         if content_height_obj[0] <= 0: break
-        
+
         prefix = f"> {idx+1}. " if idx == selected_note_idx else f"  {idx+1}. "
         attr = curses.color_pair(COLOR_PAIR_SELECTED) if idx == selected_note_idx else curses.color_pair(COLOR_PAIR_DEFAULT)
         lines_used = _draw_wrapped_text(stdscr, note_text, row, 0, width-2, width, content_height_obj, prefix=prefix, subsequent_indent_offset=len(prefix), attr=attr)
         row += lines_used
 
-    if not notes_list: 
+    if not notes_list:
         if content_height_obj[0] > 0: stdscr.addstr(row, 0, t('daily_notes_no_notes'))
 
     help_y = height - 2 - len(help_lines)
-    for i, line in enumerate(help_lines): 
+    for i, line in enumerate(help_lines):
         if help_y + i < height-1: stdscr.addstr(help_y + i, 0, line[:width-1])
 
     cmd_line = f"> {command_buffer}"
     stdscr.addstr(height - 1, 0, cmd_line.ljust(width-1))
     stdscr.move(height - 1, len(cmd_line))
     stdscr.refresh()
-    
-def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subtask_idx=-1,
-               current_view_mode=VIEW_MAIN, entity_for_dedicated_notes=None,
-               show_help_footer=True, current_date_for_daily_notes_arg=None, selected_note_idx=-1, permanent_notifications=[]):
 
-    if current_view_mode == VIEW_DEDICATED_NOTES:
+def _is_valid_past_event_today(event_item, now_for_display, today_start_dt):
+    try:
+        dt_str = event_item.get('datetime')
+        if not isinstance(dt_str, str): return False
+        dt = datetime.fromisoformat(dt_str)
+        return today_start_dt <= dt < now_for_display
+    except (ValueError, TypeError): return False
+
+def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subtask_idx=-1,
+               current_view_mode="main", entity_for_dedicated_notes=None,
+               show_help_footer=True, current_date_for_daily_notes_arg=None, selected_note_idx=-1,
+               permanent_notifications=[], pull_requests_for_review=[]):
+
+    if current_view_mode == "dedicated_notes":
         return display_dedicated_notes_view(stdscr, data, command_buffer, entity_for_dedicated_notes, selected_note_idx)
-    if current_view_mode == VIEW_DAILY_NOTES:
+    if current_view_mode == "daily_notes":
         return display_daily_notes_view(stdscr, data, command_buffer, current_date_for_daily_notes_arg, selected_note_idx)
 
     height, width = stdscr.getmaxyx()
     now_time_str = datetime.now().strftime("%H:%M:%S")
     now_dt = datetime.now()
-    
+
     if full_redraw: stdscr.clear()
 
     row = 0
@@ -185,24 +219,24 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
         if row < height - 1:
             stdscr.addstr(row, 0, "-" * (width-1))
             row += 1
-    
+
     content_start_row = row
-    
+
     all_projects = list(data.get("sub_tasks", {}).keys()) + [p['ticket'] for p in data.get("paused_tasks", [])]
     all_displayable_projects = sorted(list(set(p for p in all_projects if p not in data.get("completed_tickets", []))))
-    
+
     display_right_panel = bool(all_displayable_projects)
     panel_width = max(len(p) for p in all_displayable_projects) + 5 if all_displayable_projects else 10
     effective_main_width = width - panel_width - 1 if display_right_panel and width > 40 else width
 
     if display_right_panel:
         for i, proj_name in enumerate(all_displayable_projects):
-            if content_start_row + i >= height: break
-            stdscr.addstr(content_start_row + i, effective_main_width, "|")
+            if i >= height: break
+            stdscr.addstr(i, effective_main_width, "|")
             attr = curses.color_pair(COLOR_PAIR_DEFAULT)
             if data.get("current_ticket") == proj_name: attr = curses.color_pair(COLOR_PAIR_SELECTED) | curses.A_BOLD
             elif any(p['ticket'] == proj_name for p in data.get("paused_tasks",[])): attr = curses.color_pair(COLOR_PAIR_PAUSED)
-            stdscr.addstr(content_start_row + i, effective_main_width + 2, f"{i+1}. {proj_name}"[:panel_width-2], attr)
+            stdscr.addstr(i, effective_main_width + 2, f"{i+1}. {proj_name}"[:panel_width-2], attr)
 
     if content_start_row < height:
         stdscr.addstr(content_start_row, 0, t('ui_clock', now_time_str=now_time_str)[:effective_main_width-1])
