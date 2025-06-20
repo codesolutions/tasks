@@ -1,5 +1,11 @@
 config.json
 jira_data.json
+.idea
+jira_box.sh
+jira_box.txt
+jira_box2.txt
+jira_cache.pkl
+jira_session.pkl
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -197,3 +203,4 @@ cython_debug/
 .cursorindexingignore
 /chrome-linux64/
 /box/
+/_ignore/

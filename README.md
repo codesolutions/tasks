@@ -28,6 +28,10 @@ A terminal-based tool for tracking personal projects, their associated tickets (
 1.  **Dependencies**: Ensure you have Python 3 and the `requests` library installed.
     ```bash
     pip install requests
+    # OR if that is not working, add virtual env (preferred):
+    python3 -m venv .venv
+    source .venv/bin/activate
+    python3 -m pip install requests selenium 
     ```
     For desktop notifications on Linux, the following tools are required:
     ```bash
@@ -66,7 +70,9 @@ A terminal-based tool for tracking personal projects, their associated tickets (
     To allow the app to focus itself for notifications, it's recommended to launch it with a specific terminal title.
     ```bash
     # Example for gnome-terminal
-    gnome-terminal --title='TODAYTASKS' -- /usr/bin/python3 /path/to/your/jira_tracker.py
+    gnome-terminal --title='TODAYTASKS' -- /bin/bash -c 'source .venv/bin/activate && python3 jira_tracker.py'
+    # Or if packages are global, then you can just try:
+    ./jira_tracker.py
     ```
 
 2.  **Create a new project**:

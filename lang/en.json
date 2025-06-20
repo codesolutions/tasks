@@ -123,5 +123,7 @@
     "notification_event_body": "{details}",
     "notification_review_title": "Reviews Needed",
     "notification_review_body": "{title}: \n{repo}",
-    "ui_reviews_header": "--- Reviews Needed ---"
+    "ui_reviews_header": "--- Reviews Needed ---",
+    "jira_session_error": "Jira session expired. Press any key to login!!!",
+    "jira_login_prompt": "Not logged in to Jira. Press any key to login!!!"
 }
