@@ -61,7 +61,7 @@ reviews_lock = threading.Lock()
 sent_review_notifications = set()
 permanent_notifications = []
 app_data = {}
-data_lock = threading.Lock()
+
 
 # -- Setup Locale --
 try:
@@ -78,7 +78,7 @@ JIRA_BOX_FILE = os.path.join(SCRIPT_DIR, "jira_box2.txt")
 (COLOR_PAIR_DEFAULT, COLOR_PAIR_REVERSE, COLOR_PAIR_GREY, COLOR_PAIR_PAUSED,
  COLOR_PAIR_SELECTED, COLOR_PAIR_TASK_ALL_SUBTASKS_DONE, COLOR_PAIR_URGENT_BOX,
  COLOR_PAIR_PR_UNHANDLED, COLOR_PAIR_PR_APPROVED, COLOR_PAIR_FOCUSED,
- COLOR_PAIR_PERMANENT_NOTIFICATION) = range(1, 12)
+ COLOR_PAIR_PERMANENT_NOTIFICATION, COLOR_PAIR_STANDOUT) = range(1, 13)
 
 # -- Views --
 VIEW_MAIN = "main"
@@ -430,6 +430,8 @@ def display_daily_notes_view(stdscr, data, command_buffer, current_date_for_note
         stdscr.move(height - 1, min(cursor_x_daily, width - 1 if width > 0 else 0))
     except curses.error: pass
     stdscr.refresh()
+
+    #main_win.refresh()
     return True
 
 
@@ -524,6 +526,23 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
 
     show_permanent_notification(stdscr)
 
+    #if full_redraw:
+    #    stdscr.clear()
+
+    # Define dimensions for the main content window
+    # We place it at y=1 to leave space for the clock at the top
+    #main_win_h = height - 1 - footer_total_height
+    #main_win_w = effective_main_width
+
+    # Create the new window for the main content
+    # We only create the window if there's enough space for it
+    #if main_win_h > 2 and main_win_w > 2:
+    #    main_win = curses.newwin(main_win_h, main_win_w, 1, 1)
+    #    main_win.box() # Draw a border around the new window
+    #else:
+        # If the screen is too small, we'll draw directly on stdscr as a fallback
+    #    main_win = stdscr
+
     if not full_redraw:
         try:
             if width > 0: stdscr.addstr(0, 0, " " * width)
@@ -540,12 +559,17 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
                     elif data.get("focused_ticket") == ticket_name_line0:
                         attr_line0 = curses.color_pair(COLOR_PAIR_FOCUSED)
                     else:
+
                         subtasks_for_ticket0 = data.get("sub_tasks", {}).get(ticket_name_line0, {})
                         if any(st.get("pr_status") == 'attention_needed' for st in subtasks_for_ticket0.values() if isinstance(st, dict)):
                             attr_line0 = curses.color_pair(COLOR_PAIR_PR_UNHANDLED)
                         elif any(st.get("pr_status") == 'approved' for st in subtasks_for_ticket0.values() if isinstance(st, dict)):
                             attr_line0 = curses.color_pair(COLOR_PAIR_PR_APPROVED)
                         elif subtasks_for_ticket0 and all(st_details.get("done", False) for st_details in subtasks_for_ticket0.values() if isinstance(st_details, dict)):
+                            attr_line0 = curses.color_pair(COLOR_PAIR_TASK_ALL_SUBTASKS_DONE)
+                        elif subtasks_for_ticket0 and all(st_details.get("hidden", False) for st_details in subtasks_for_ticket0.values() if isinstance(st_details, dict)):
+                            attr_line0 = curses.color_pair(COLOR_PAIR_TASK_ALL_SUBTASKS_DONE)
+                        elif not subtasks_for_ticket0:
                             attr_line0 = curses.color_pair(COLOR_PAIR_TASK_ALL_SUBTASKS_DONE)
 
                     full_text_line0 = f"1. {ticket_name_line0}"
@@ -596,6 +620,10 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
                     item_attr = curses.color_pair(COLOR_PAIR_PR_APPROVED)
                 elif subtasks_for_this_panel_ticket and all(st_details.get("done", False) for st_details in subtasks_for_this_panel_ticket.values() if isinstance(st_details, dict)):
                     item_attr = curses.color_pair(COLOR_PAIR_TASK_ALL_SUBTASKS_DONE)
+                elif subtasks_for_this_panel_ticket and all(st_details.get("hidden", False) for st_details in subtasks_for_this_panel_ticket.values() if isinstance(st_details, dict)):
+                    attr_line0 = curses.color_pair(COLOR_PAIR_TASK_ALL_SUBTASKS_DONE)
+                elif not subtasks_for_this_panel_ticket:
+                    attr_line0 = curses.color_pair(COLOR_PAIR_TASK_ALL_SUBTASKS_DONE)
 
 
             full_text_for_line = f"{i+1}. {ticket_name_in_panel}"
@@ -744,41 +772,97 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
             row += 1; content_height_obj[0] -= 1
 
         notes_to_show_preview = []
+        task_info_to_show = []
         notes_title_preview = ""
         if selected_subtask_idx != -1 and 0 <= selected_subtask_idx < len(subtask_list_to_use):
             sel_sub_name, sel_sub_details = subtask_list_to_use[selected_subtask_idx]
             sel_sub_name = inc.helpers.get_jira_ticket_from_url(sel_sub_name)
-            notes_title_preview = t('ui_subtask_notes_header', subtask=sel_sub_name)
+            sub_task_with_desc = sel_sub_name
             notes_to_show_preview = sel_sub_details.get("notes", []).copy()
 
             if sel_sub_details.get("pr_url"):
-                notes_to_show_preview.insert(0, f"PR: {sel_sub_details.get('pr_url')}")
+                task_info_to_show.insert(0, f"PR: {sel_sub_details.get('pr_url')}")
+
+            pr_details = sub_task_details_obj.get("pr_details", {})
+            if pr_details:
+                # Draw overall status
+                status_text = pr_details.get('status_text', 'waiting')
+                #task_info_to_show.insert(1, f"PR Status: {status_text}")
+
+                # Draw approvers with emojis
+                approvers_str = "PR " + status_text + ": " + ", ".join(pr_details.get('approvers_formatted', []))
+                task_info_to_show.insert(1, approvers_str)
+
 
             cached_item = cache_copy.get(sel_sub_name, {})
 
             if cached_item:
                 status = cached_item.get('data', {}).get('fields', {}).get('status', {}).get('name', 'N/A')
-                notes_to_show_preview.insert(0, f"Status: {status}")
+                status_icon = status
+                if status == "Done":
+                    status_icon = "✅"
+                elif status == "In progress":
+                    status_icon = "🚧"
+                elif status == "In review":
+                    status_icon = "👀"
+                elif status == "Todo":
+                    status_icon = "📌"
+                elif status == "Backlog":
+                    status_icon = "🗂️"
 
-                summary = cached_item.get('data', {}).get('fields', {}).get('summary', {})
-                notes_to_show_preview.insert(0, f"Summary: {summary}")
-
-                jira_link = f"{inc.config_manager.config.get('JIRA_URL')}/browse/{sel_sub_name}"
-                notes_to_show_preview.insert(0, f"Link: {jira_link}")
 
                 vf_link = next((l.get("object",{}).get("url") for l in cached_item.get('remotelinks',[]) if l.get("globalId") == "VF - Log Hours"), "N/A")
-                notes_to_show_preview.insert(0, f"VF: {vf_link}")
+                task_info_to_show.insert(0, f"{vf_link}")
+
+                jira_link = f"{inc.config_manager.config.get('JIRA_URL')}/browse/{sel_sub_name}"
+                task_info_to_show.insert(0, f"{status_icon} {jira_link}")
+
+                summary = cached_item.get('data', {}).get('fields', {}).get('summary', {})
+
+                sub_task_with_desc = f"{sel_sub_name} {summary}"
+
+            notes_title_preview = t('ui_subtask_notes_header', subtask=sub_task_with_desc)
 
         elif current_ticket:
             notes_title_preview = t('ui_main_task_notes_header', task=current_ticket)
             notes_to_show_preview = data.get("notes", {}).get(current_ticket, [])
 
         if notes_title_preview and content_height_obj[0] > 0 and effective_main_width > 2:
+            row += 1
             stdscr.addstr(row, 2, notes_title_preview[:effective_main_width-2])
             row += 1; content_height_obj[0] -= 1
             if not notes_to_show_preview and content_height_obj[0] > 0 :
                 stdscr.addstr(row, 4, t('ui_no_notes')[:effective_main_width-4])
                 row += 1; content_height_obj[0] -=1
+
+
+        if len(task_info_to_show):
+            lines_used_note = _draw_wrapped_text(stdscr, "┌──────── ─── ── ── ─ ─  ─   ─", row, 4,
+                effective_main_width, effective_main_width, content_height_obj,
+                prefix="", subsequent_indent_offset=0,
+                attr=curses.color_pair(COLOR_PAIR_PAUSED))
+            row += lines_used_note
+
+        for note_idx, note in enumerate(task_info_to_show[:10]):
+            if content_height_obj[0] <= 0 : break
+            if effective_main_width <= 4: break
+
+            prefix_note = f"| "
+            start_col_note = 4
+            max_text_width_note = effective_main_width - start_col_note - len(prefix_note)
+            if max_text_width_note < 0 : max_text_width_note = 0
+            lines_used_note = _draw_wrapped_text(stdscr, note, row, start_col_note,
+                                            max_text_width_note, effective_main_width, content_height_obj,
+                                            prefix=prefix_note, subsequent_indent_offset=len(prefix_note),
+                                            attr=curses.color_pair(COLOR_PAIR_PAUSED))
+            row += lines_used_note
+
+        if len(task_info_to_show):
+            lines_used_note = _draw_wrapped_text(stdscr, "└──────── ─── ── ── ─ ─  ─   ─", row, 4,
+                effective_main_width, effective_main_width, content_height_obj,
+                prefix="", subsequent_indent_offset=0,
+                attr=curses.color_pair(COLOR_PAIR_PAUSED))
+            row += lines_used_note
 
         for note_idx, note in enumerate(notes_to_show_preview[:10]):
             if content_height_obj[0] <= 0 : break
@@ -791,6 +875,7 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
                                             max_text_width_note, effective_main_width, content_height_obj,
                                             prefix=prefix_note, subsequent_indent_offset=len(prefix_note))
             row += lines_used_note
+
         if len(notes_to_show_preview) > 10 and content_height_obj[0] > 0 and effective_main_width > 7:
             stdscr.addstr(row, 4, t('ui_more_notes')[:effective_main_width-4])
             row+=1; content_height_obj[0]-=1
@@ -1077,6 +1162,7 @@ def handle_input(data, command_parts, stdscr, current_view_mode, selected_subtas
             if current_ticket_name_val in data.get("sub_tasks", {}) and \
                sub_task_to_hide_name in data["sub_tasks"][current_ticket_name_val]:
                 data["sub_tasks"][current_ticket_name_val][sub_task_to_hide_name]["hidden"] = True
+                data["sub_tasks"][current_ticket_name_val][sub_task_to_hide_name]["done"] = True
                 if sub_task_details.get("focused"):
                     data["sub_tasks"][current_ticket_name_val][sub_task_to_hide_name]["focused"] = False
                     data["focused_subtask"] = None # Clear global focus if this was the one
@@ -1449,9 +1535,17 @@ def poll_pull_requests(data_lock, data_ref):
 
                     headers = {"Authorization": f"Bearer {api_token}", "Accept": "application/json;charset=UTF-8"}
                     try:
+
+                        reviewers_response = requests.get(api_url, headers=headers, timeout=10)
+                        reviewers_response.raise_for_status()
+                        reviewers = reviewers_response.json()
+
+                        api_url = f"{convert_to_api_url(pr_url)}/activities"
                         response = requests.get(api_url, headers=headers, timeout=10)
                         response.raise_for_status()
                         activities = response.json()
+
+                        # logging.info(activities)
 
                         is_merged = False
                         unique_approvers = set()
@@ -1464,6 +1558,46 @@ def poll_pull_requests(data_lock, data_ref):
                                 approver_id = activity.get("user", {}).get("id")
                                 if approver_id:
                                     unique_approvers.add(approver_id)
+
+
+
+
+
+                        # Format approvers
+                        approvers_formatted = []
+                        approver_count = 0
+                        total_reviewers = len(reviewers.get('reviewers', []))
+                        for r in reviewers.get('reviewers', []):
+                            status_emoji = "❓" # Not responded
+                            if r['status'] == 'APPROVED':
+                                status_emoji = "✅"
+                                approver_count += 1
+                            elif r['status'] == 'NEEDS_WORK':
+                                status_emoji = "❌"
+                            approvers_formatted.append(f"{status_emoji} {r['user']['displayName']}")
+
+                        # Determine overall status text
+                        status_text = "waiting"
+                        if activities.get('state') == 'MERGED':
+                            status_text = "merged"
+                        elif activities.get('state') == 'DECLINED':
+                            status_text = "declined"
+                        elif approver_count > 0:
+                            status_text = f"approved ({approver_count}/{total_reviewers})"
+
+                        # Store in the main data object
+
+                        original_subtask = app_data["sub_tasks"][ticket][subtask_name]
+                        original_subtask['pr_details'] = {
+                            'status_text': status_text,
+                            'approvers_formatted': approvers_formatted
+                        }
+                        data_changed = True
+
+
+
+
+
 
                         if is_merged:
                             if pr_status != 'merged':
@@ -1519,7 +1653,7 @@ def convert_to_api_url(pr_url):
     match = re.search(r'projects/(?P<projectKey>[^/]+)/repos/(?P<repositorySlug>[^/]+)/pull-requests/(?P<pullRequestId>\d+)', pr_url)
     if match:
         parts = match.groupdict()
-        return f"{inc.config_manager.config.get('STASH_URL')}/rest/api/1.0/projects/{parts['projectKey']}/repos/{parts['repositorySlug']}/pull-requests/{parts['pullRequestId']}/activities"
+        return f"{inc.config_manager.config.get('STASH_URL')}/rest/api/1.0/projects/{parts['projectKey']}/repos/{parts['repositorySlug']}/pull-requests/{parts['pullRequestId']}"
     return None
 
 def check_for_unhandled_comments(activities, my_user_id):
@@ -1650,11 +1784,12 @@ def event_notification_poller(data_lock, data_ref):
 
 
 def main(stdscr):
-    global COLOR_PAIR_DEFAULT, COLOR_PAIR_REVERSE, COLOR_PAIR_GREY, COLOR_PAIR_PAUSED, COLOR_PAIR_SELECTED, COLOR_PAIR_TASK_ALL_SUBTASKS_DONE, COLOR_PAIR_URGENT_BOX, COLOR_PAIR_PR_UNHANDLED, COLOR_PAIR_PR_APPROVED, COLOR_PAIR_FOCUSED, COLOR_PAIR_PERMANENT_NOTIFICATION
-    global app_data, permanent_notifications, data_lock
+    global COLOR_PAIR_DEFAULT, COLOR_PAIR_REVERSE, COLOR_PAIR_GREY, COLOR_PAIR_PAUSED, COLOR_PAIR_SELECTED, COLOR_PAIR_TASK_ALL_SUBTASKS_DONE, COLOR_PAIR_URGENT_BOX, COLOR_PAIR_PR_UNHANDLED, COLOR_PAIR_PR_APPROVED, COLOR_PAIR_FOCUSED, COLOR_PAIR_PERMANENT_NOTIFICATION, COLOR_PAIR_STANDOUT
+    global app_data, permanent_notifications
     stop_event = threading.Event()
     jira_cache = load_jira_cache()
     jira_cache_lock = threading.Lock()
+    data_lock = threading.Lock()
     result = "EXIT"
 
     if not inc.config_manager.STRINGS:
@@ -1679,6 +1814,7 @@ def main(stdscr):
         curses.init_pair(COLOR_PAIR_PR_APPROVED, curses.COLOR_BLACK, curses.COLOR_GREEN)
         curses.init_pair(COLOR_PAIR_FOCUSED, curses.COLOR_BLACK, curses.COLOR_YELLOW)
         curses.init_pair(COLOR_PAIR_PERMANENT_NOTIFICATION, curses.COLOR_BLACK, curses.COLOR_RED)
+        curses.init_pair(COLOR_PAIR_STANDOUT, curses.A_STANDOUT, curses.COLOR_WHITE)
 
     except: pass
 
