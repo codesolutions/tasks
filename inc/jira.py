@@ -6,8 +6,9 @@ import copy
 import threading
 import logging
 import sys
+import queue
 
-import inc.config_manager
+from . import config_manager
 from inc.helpers import get_jira_ticket_from_url, t
 
 LOG_FILE = os.path.join(
@@ -21,10 +22,13 @@ logging.basicConfig(filename=LOG_FILE,
                     datefmt='%Y-%m-%d %H:%M:%S',
                     level=logging.DEBUG)
 
+jira_request_queue = queue.Queue()
+jira_in_flight = set() # To track tasks currently in the queue or being fetched
+
 jira_cache = {}
 jira_cache_lock = threading.Lock()
-inc.config_manager.load_config()
-config = inc.config_manager.config
+config_manager.load_config()
+config = config_manager.config
 
 SCRIPT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
 JIRA_CACHE_FILE = os.path.join(SCRIPT_DIR, "jira_cache.pkl")
@@ -88,28 +92,23 @@ def get_and_save_jira_session(permanent_notifications_ref):
 
 
 
-# --- NEW: Functions to load and save the cache ---
 def load_jira_cache():
-    """Loads the Jira cache from a file on startup."""
-    global jira_cache
-
+    """Loads the Jira cache from a file on startup and returns it."""
     try:
         with open(JIRA_CACHE_FILE, 'rb') as f:
-            jira_cache = pickle.load(f)
+            return pickle.load(f)
     except (FileNotFoundError, EOFError, pickle.UnpicklingError):
         # File doesn't exist or is empty/corrupt, start with an empty cache.
-        jira_cache = {}
+        return {}
 
-def save_jira_cache():
-    global jira_cache
-    """Saves the in-memory Jira cache to a file."""
-    with jira_cache_lock:
+def save_jira_cache(cache_to_save, lock_to_use):
+    """Saves the provided cache object to a file using the provided lock."""
+    with lock_to_use:
         try:
             with open(JIRA_CACHE_FILE, 'wb') as f:
-                pickle.dump(jira_cache, f)
+                pickle.dump(cache_to_save, f)
         except IOError:
             logging.info(f"File save failed: {JIRA_CACHE_FILE}")
-            # Handle cases where the file cannot be written
             pass
 
 def get_jira_issue_details(issue_id, permanent_notifications_ref):
@@ -129,10 +128,13 @@ def get_jira_issue_details(issue_id, permanent_notifications_ref):
                 session.cookies.set(cookie['name'], cookie['value'], domain=cookie['domain'])
     except Exception:
         if t('jira_session_error') not in permanent_notifications_ref: permanent_notifications_ref.append(t('jira_session_error'))
+        logging.info(f"{t('jira_session_error')}")
         return None, None
+
 
     issue_url = f'{jira_base_url}/rest/api/2/issue/{issue_id}'
     remotelink_url = f'{jira_base_url}/rest/api/2/issue/{issue_id}/remotelink'
+
     try:
         issue_response = session.get(issue_url, timeout=15)
         issue_response.raise_for_status()
@@ -153,38 +155,41 @@ def get_jira_issue_details(issue_id, permanent_notifications_ref):
         if msg not in permanent_notifications_ref: permanent_notifications_ref.append(msg)
     return None, None
 
-def fetch_and_cache_jira_data(issue_id, permanent_notifications_ref, seconds=600):
-    global config, jira_cache
 
-    now = time.time()
-    if issue_id in jira_cache and (now - jira_cache[issue_id].get('timestamp', 0) < seconds):
-        return
+def jira_queue_worker(stop_event, permanent_notifications_ref, cache_ref, lock_ref):
+    """
+    Worker thread that processes Jira data requests from a queue, acting on a shared cache.
+    """
+    while not stop_event.is_set():
+        try:
+            issue_id = jira_request_queue.get(timeout=1)
 
-    issue_data, remotelink_data = get_jira_issue_details(issue_id, permanent_notifications_ref)
+            # Fetch new data
+            issue_data, remotelink_data = get_jira_issue_details(issue_id, permanent_notifications_ref)
 
-    if issue_data:
-        jira_cache[issue_id] = {'data': issue_data, 'remotelinks': remotelink_data, 'timestamp': now}
-        save_jira_cache()
+            # If data was fetched successfully, update the SHARED cache
+            if issue_data:
+                with lock_ref: # Use the passed-in lock
+                    # Use the passed-in cache reference
+                    cache_ref[issue_id] = {
+                        'data': issue_data,
+                        'remotelinks': remotelink_data,
+                        'timestamp': time.time()
+                    }
+                # Save the updated shared cache to the file
+                save_jira_cache(cache_ref, lock_ref)
 
-def jira_data_poller(data, data_lock, permanent_notifications_ref):
+            # Task is done, remove from the in-flight set so it can be re-queued in the future if needed
+            if issue_id in jira_in_flight:
+                jira_in_flight.remove(issue_id)
 
-    data_copy = copy.deepcopy(data)
+            jira_request_queue.task_done()
 
-    while True:
-
-        all_ticket_ids = {
-            tid for project_tasks in data_copy.get("sub_tasks", {}).values()
-            for tid, details in project_tasks.items() if not details.get('hidden')
-        }
-            #all_ticket_ids = {tid for p in data_copy.get("sub_tasks", {}).values() for tid in p}
-
-        for url in all_ticket_ids:
-            ticket_id = get_jira_ticket_from_url(url)
-            if (ticket_id != url):
-                if t('jira_login_prompt') not in permanent_notifications_ref and t('jira_session_error') not in permanent_notifications_ref:
-                    fetch_and_cache_jira_data(ticket_id, permanent_notifications_ref)
-                    time.sleep(1)
-
-        #if data_changed:
-        #    save_data(data_ref)
-        time.sleep(600)
+        except queue.Empty:
+            # This is expected when the queue is empty, just loop again
+            continue
+        except Exception as e:
+            logging.error(f"An error occurred in the Jira queue worker: {e}")
+            # Ensure we remove from in-flight even if there was an error
+            if 'issue_id' in locals() and issue_id in jira_in_flight:
+                jira_in_flight.remove(issue_id)

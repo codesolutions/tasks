@@ -14,11 +14,21 @@ import subprocess
 import webbrowser
 import pickle
 import logging
+import threading
 
 # internal imports
 import inc.config_manager
 
-from inc.jira import jira_cache, jira_cache_lock, get_and_save_jira_session, jira_data_poller, load_jira_cache, fetch_and_cache_jira_data
+
+from inc.jira import (
+    load_jira_cache,
+    jira_queue_worker,  # Import the new worker
+    jira_request_queue, # Import the queue
+    jira_in_flight,     # Import the in-flight tracker
+    get_and_save_jira_session,  # old
+    # jira_data_poller, # old
+    config as jira_config
+)
 import inc.helpers
 from inc.helpers import t
 
@@ -426,9 +436,10 @@ def display_daily_notes_view(stdscr, data, command_buffer, current_date_for_note
 def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subtask_idx=-1,
                current_view_mode=VIEW_MAIN, entity_for_dedicated_notes=None,
                current_ticket_subtask_list_for_display_arg=None, show_help_footer=True,
-               current_date_for_daily_notes_arg=None, selected_note_idx=-1):
+               current_date_for_daily_notes_arg=None, selected_note_idx=-1,
+               jira_cache=None, jira_cache_lock=None):
 
-    global pull_requests_for_review, jira_cache, permanent_notifications, jira_cache_lock
+    global pull_requests_for_review, permanent_notifications
 
     if current_view_mode == VIEW_DEDICATED_NOTES:
         return display_dedicated_notes_view(stdscr, data, command_buffer, entity_for_dedicated_notes, show_help_footer, selected_note_idx)
@@ -454,6 +465,13 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
 
     all_displayable_tickets = sorted([t for t in list(filter(None, all_tickets_set)) if t not in completed_tickets])
 
+    # To avoid locking frequently, we make a quick copy of the cache for this render pass.
+    with jira_cache_lock:
+        cache_copy = jira_cache.copy()
+
+    # Define the cache timeout (10 minutes = 600 seconds) as you suggested
+    JIRA_CACHE_TIMEOUT = 600
+    now = time.time()
 
     display_right_panel = bool(all_displayable_tickets)
     separator_char = "|"
@@ -674,21 +692,28 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
                 row += 1; content_height_obj[0] -= 1
 
             for i, (sub_task_name, sub_task_details_obj) in enumerate(subtask_list_to_use):
-                sub_task_name = inc.helpers.get_jira_ticket_from_url(sub_task_name)
                 if content_height_obj[0] <= 0: break
                 if effective_main_width <= 4: break
+
+                jira_ticket_id = inc.helpers.get_jira_ticket_from_url(sub_task_name)
                 is_done = sub_task_details_obj.get("done", False)
                 is_focused = sub_task_details_obj.get("focused", False)
+                status_char = "‼️" if is_focused else "✅" if is_done else "[ ]"
 
-                if is_focused:
-                    status_char = "‼️"
-                elif is_done:
-                    status_char = "✅"
-                else:
-                    status_char = "[ ]"
-
-                prefix = ""
+                display_text = jira_ticket_id
                 item_attr = curses.color_pair(COLOR_PAIR_DEFAULT)
+
+                if jira_ticket_id != sub_task_name:
+                    cached_item = cache_copy.get(jira_ticket_id)
+                    should_fetch = not cached_item or (now - cached_item.get('timestamp', 0)) > JIRA_CACHE_TIMEOUT
+
+                    if should_fetch and jira_ticket_id not in jira_in_flight:
+                        jira_in_flight.add(jira_ticket_id)
+                        jira_request_queue.put(jira_ticket_id)
+
+                    if cached_item:
+                        status = cached_item.get('data', {}).get('fields', {}).get('status', {}).get('name', 'N/A')
+                        display_text += f" [{status}]"
 
                 pr_status = sub_task_details_obj.get("pr_status")
                 if pr_status == 'attention_needed':
@@ -697,19 +722,23 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
                     item_attr = curses.color_pair(COLOR_PAIR_PR_APPROVED)
 
                 if i == selected_subtask_idx:
-                    prefix = ""
                     item_attr = curses.color_pair(COLOR_PAIR_SELECTED)
 
-                full_prefix = f"{prefix}{i+1}. {status_char} "
+                prefix = ">" if i == selected_subtask_idx else ""
+                full_prefix = f"{prefix}{' ' if prefix else ''}{i+1}. {status_char} "
+
                 start_col = 2
                 max_text_width_for_line = effective_main_width - start_col - len(full_prefix)
                 if max_text_width_for_line < 0 : max_text_width_for_line = 0
-                lines_used = _draw_wrapped_text(stdscr, sub_task_name, row, start_col,
+
+                lines_used = _draw_wrapped_text(stdscr, display_text, row, start_col,
                                                 max_text_width_for_line, effective_main_width, content_height_obj,
                                                 prefix=full_prefix,
-                                                subsequent_indent_offset=len(prefix) + len(f"{i+1}. {status_char} "),
+                                                subsequent_indent_offset=len(prefix) + len(f" {i+1}. {status_char} "),
                                                 attr=item_attr)
                 row += lines_used
+
+
         elif content_height_obj[0] > 0 and effective_main_width > 2 and current_ticket:
             stdscr.addstr(row, 2, t('ui_no_subtasks')[:effective_main_width-2])
             row += 1; content_height_obj[0] -= 1
@@ -725,26 +754,20 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
             if sel_sub_details.get("pr_url"):
                 notes_to_show_preview.insert(0, f"PR: {sel_sub_details.get('pr_url')}")
 
-            fetch_and_cache_jira_data(sel_sub_name, permanent_notifications, 90)
-
-            with jira_cache_lock: cached_item = jira_cache.get(sel_sub_name, {})
-
-            logging.info(sel_sub_name)
-            logging.info(cached_item)
-            logging.info(jira_cache)
+            cached_item = cache_copy.get(sel_sub_name, {})
 
             if cached_item:
                 status = cached_item.get('data', {}).get('fields', {}).get('status', {}).get('name', 'N/A')
                 notes_to_show_preview.insert(0, f"Status: {status}")
 
+                summary = cached_item.get('data', {}).get('fields', {}).get('summary', {})
+                notes_to_show_preview.insert(0, f"Summary: {summary}")
 
                 jira_link = f"{inc.config_manager.config.get('JIRA_URL')}/browse/{sel_sub_name}"
                 notes_to_show_preview.insert(0, f"Link: {jira_link}")
 
-
                 vf_link = next((l.get("object",{}).get("url") for l in cached_item.get('remotelinks',[]) if l.get("globalId") == "VF - Log Hours"), "N/A")
-                notes_to_show_preview.insert(0, f"VF Log Hours: {vf_link}")
-
+                notes_to_show_preview.insert(0, f"VF: {vf_link}")
 
         elif current_ticket:
             notes_title_preview = t('ui_main_task_notes_header', task=current_ticket)
@@ -930,7 +953,7 @@ def show_notification(stdscr, message):
         stdscr.addstr(notification_line, 0, message_to_show.ljust(width-1 if width > 0 else 0))
         stdscr.attroff(curses.color_pair(COLOR_PAIR_REVERSE))
         stdscr.refresh()
-        curses.napms(1500)
+        curses.napms(500)
         stdscr.addstr(notification_line, 0, " " * (width-1 if width > 0 else 0))
         show_permanent_notification(stdscr)
         stdscr.refresh()
@@ -1629,7 +1652,9 @@ def event_notification_poller(data_lock, data_ref):
 def main(stdscr):
     global COLOR_PAIR_DEFAULT, COLOR_PAIR_REVERSE, COLOR_PAIR_GREY, COLOR_PAIR_PAUSED, COLOR_PAIR_SELECTED, COLOR_PAIR_TASK_ALL_SUBTASKS_DONE, COLOR_PAIR_URGENT_BOX, COLOR_PAIR_PR_UNHANDLED, COLOR_PAIR_PR_APPROVED, COLOR_PAIR_FOCUSED, COLOR_PAIR_PERMANENT_NOTIFICATION
     global app_data, permanent_notifications, data_lock
-
+    stop_event = threading.Event()
+    jira_cache = load_jira_cache()
+    jira_cache_lock = threading.Lock()
     result = "EXIT"
 
     if not inc.config_manager.STRINGS:
@@ -1677,8 +1702,8 @@ def main(stdscr):
     pr_polling_thread = threading.Thread(target=poll_pull_requests, args=(data_lock, app_data), daemon=True)
     pr_polling_thread.start()
 
-    #jira_data_thread = threading.Thread(target=jira.jira_data_poller, args=(data_lock, data), daemon=True)
-    #jira_data_thread.start()
+    jira_thread = threading.Thread(target=jira_queue_worker, args=(stop_event, permanent_notifications, jira_cache, jira_cache_lock), daemon=True)
+    jira_thread.start()
 
     notification_thread = threading.Thread(target=event_notification_poller, args=(data_lock, app_data), daemon=True)
     notification_thread.start()
@@ -1686,8 +1711,14 @@ def main(stdscr):
     review_polling_thread = threading.Thread(target=poll_reviews_needed, args=(), daemon=True)
     review_polling_thread.start()
 
+    #jira_data_thread = threading.Thread(target=jira.jira_data_poller, args=(data_lock, data), daemon=True)
+    #jira_data_thread.start()
+
     #threading.Thread(target=poll_pull_requests, args=(app_data, data_lock, save_data, permanent_notifications), daemon=True).start()
-    threading.Thread(target=jira_data_poller, args=(app_data, data_lock, permanent_notifications), daemon=True).start()
+
+    ####commented
+    #threading.Thread(target=jira_data_poller, args=(app_data, data_lock, permanent_notifications), daemon=True).start()
+
     #threading.Thread(target=event_notification_poller, args=(app_data, data_lock, sent_notifications), daemon=True).start()
     #threading.Thread(target=poll_reviews_needed, args=(reviews_for_display, reviews_lock, sent_review_notifications), daemon=True).start()
 
@@ -1927,7 +1958,7 @@ def main(stdscr):
             # Redraw the UI after every valid keypress.
             request_full_redraw = True
             last_content_refresh_time = 0
-            display_ui(stdscr, app_data, command_buffer, request_full_redraw, selected_subtask_index, current_view, entity_for_dedicated_notes, current_ticket_subtask_list_visible, show_help_footer, current_date_for_daily_notes, selected_note_index)
+            display_ui(stdscr, app_data, command_buffer, request_full_redraw, selected_subtask_index, current_view, entity_for_dedicated_notes, current_ticket_subtask_list_visible, show_help_footer, current_date_for_daily_notes, selected_note_index, jira_cache, jira_cache_lock)
             if request_full_redraw : request_full_redraw = False
 
         if not user_activity_caused_draw_this_cycle:
@@ -1935,7 +1966,7 @@ def main(stdscr):
                 request_full_redraw = True
 
             if request_full_redraw or (current_time - last_clock_refresh_time >= clock_refresh_interval):
-                display_ui(stdscr, app_data, command_buffer, request_full_redraw, selected_subtask_index, current_view, entity_for_dedicated_notes, current_ticket_subtask_list_visible, show_help_footer, current_date_for_daily_notes, selected_note_index)
+                display_ui(stdscr, app_data, command_buffer, request_full_redraw, selected_subtask_index, current_view, entity_for_dedicated_notes, current_ticket_subtask_list_visible, show_help_footer, current_date_for_daily_notes, selected_note_index, jira_cache, jira_cache_lock)
                 last_clock_refresh_time = current_time
                 if request_full_redraw:
                     last_content_refresh_time = current_time
@@ -1959,7 +1990,7 @@ if __name__ == "__main__":
             #time.sleep(3)
 
             result = curses.wrapper(main)
-            print(result)
+            #print(result)
 
         except curses.error as e:
             print(t('error_curses', e=e), file=sys.stderr)
@@ -1992,4 +2023,8 @@ if __name__ == "__main__":
         else:
             break
 
+    #logging.info("Stopping Jira poller thread.")
+    #stop_event.set()
+    #jira_thread.join()  # Wait for the thread to finish
+    #logging.info("Jira poller thread stopped.")
     print(f"\n{t('app_closed')}")
