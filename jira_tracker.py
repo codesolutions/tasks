@@ -783,7 +783,7 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
             if sel_sub_details.get("pr_url"):
                 task_info_to_show.insert(0, f"PR: {sel_sub_details.get('pr_url')}")
 
-            pr_details = sub_task_details_obj.get("pr_details", {})
+            pr_details = sel_sub_details.get("pr_details", {})
             if pr_details:
                 # Draw overall status
                 status_text = pr_details.get('status_text', 'waiting')
@@ -801,9 +801,9 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
                 status_icon = status
                 if status == "Done":
                     status_icon = "✅"
-                elif status == "In progress":
+                elif status == "In Progress":
                     status_icon = "🚧"
-                elif status == "In review":
+                elif status == "In Review":
                     status_icon = "👀"
                 elif status == "Todo":
                     status_icon = "📌"
