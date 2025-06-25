@@ -148,11 +148,14 @@ def get_jira_issue_details(issue_id, permanent_notifications_ref):
 
         return issue_data, remotelink_data
     except requests.exceptions.HTTPError as e:
+        logging.error(f"Failed to get: {issue_url}")
         msg = t('jira_auth_error') if e.response.status_code in [401, 403] else t('jira_http_error', status=e.response.status_code)
         if msg not in permanent_notifications_ref: permanent_notifications_ref.append(msg)
+        if t('jira_login_prompt') not in permanent_notifications_ref: permanent_notifications_ref.append(t('jira_login_prompt'))
     except requests.exceptions.RequestException as e:
         msg = t('jira_generic_error', e=str(e))
         if msg not in permanent_notifications_ref: permanent_notifications_ref.append(msg)
+        if t('jira_login_prompt') not in permanent_notifications_ref: permanent_notifications_ref.append(t('jira_login_prompt'))
     return None, None
 
 

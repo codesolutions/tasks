@@ -563,8 +563,10 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
                         subtasks_for_ticket0 = data.get("sub_tasks", {}).get(ticket_name_line0, {})
                         if any(st.get("pr_status") == 'attention_needed' for st in subtasks_for_ticket0.values() if isinstance(st, dict)):
                             attr_line0 = curses.color_pair(COLOR_PAIR_PR_UNHANDLED)
+                            if f"{ticket_name_line0}: PR attention needed!" not in permanent_notifications: permanent_notifications.append(f"{ticket_name_line0}: PR attention needed!")
                         elif any(st.get("pr_status") == 'approved' for st in subtasks_for_ticket0.values() if isinstance(st, dict)):
                             attr_line0 = curses.color_pair(COLOR_PAIR_PR_APPROVED)
+                            if f"{ticket_name_line0}: PR approved. Please merge!" not in permanent_notifications: permanent_notifications.append(f"{ticket_name_line0}: PR approved. Please merge!")
                         elif subtasks_for_ticket0 and all(st_details.get("done", False) for st_details in subtasks_for_ticket0.values() if isinstance(st_details, dict)):
                             attr_line0 = curses.color_pair(COLOR_PAIR_TASK_ALL_SUBTASKS_DONE)
                         elif subtasks_for_ticket0 and all(st_details.get("hidden", False) for st_details in subtasks_for_ticket0.values() if isinstance(st_details, dict)):
@@ -616,8 +618,10 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
                 # Check for PR status for background color
                 if any(st.get("pr_status") == 'attention_needed' for st in subtasks_for_this_panel_ticket.values() if isinstance(st, dict)):
                     item_attr = curses.color_pair(COLOR_PAIR_PR_UNHANDLED)
+                    if f"{ticket_name_in_panel}: PR attention needed!" not in permanent_notifications: permanent_notifications.append(f"{ticket_name_in_panel}: PR attention needed!")
                 elif any(st.get("pr_status") == 'approved' for st in subtasks_for_this_panel_ticket.values() if isinstance(st, dict)):
                     item_attr = curses.color_pair(COLOR_PAIR_PR_APPROVED)
+                    if f"{ticket_name_in_panel}: PR approved. Please merge!" not in permanent_notifications: permanent_notifications.append(f"{ticket_name_in_panel}: PR approved. Please merge!")
                 elif subtasks_for_this_panel_ticket and all(st_details.get("done", False) for st_details in subtasks_for_this_panel_ticket.values() if isinstance(st_details, dict)):
                     item_attr = curses.color_pair(COLOR_PAIR_TASK_ALL_SUBTASKS_DONE)
                 elif subtasks_for_this_panel_ticket and all(st_details.get("hidden", False) for st_details in subtasks_for_this_panel_ticket.values() if isinstance(st_details, dict)):
@@ -746,6 +750,7 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
                 pr_status = sub_task_details_obj.get("pr_status")
                 if pr_status == 'attention_needed':
                     item_attr = curses.color_pair(COLOR_PAIR_PR_UNHANDLED)
+
                 elif pr_status == 'approved':
                     item_attr = curses.color_pair(COLOR_PAIR_PR_APPROVED)
 
@@ -857,6 +862,22 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
                                             attr=curses.color_pair(COLOR_PAIR_PAUSED))
             row += lines_used_note
 
+        notes_with_unhandled = [n for n in notes_to_show_preview if n.startswith("*PR* ")]
+        for note_idx, note in enumerate(notes_with_unhandled[:10]):
+            if content_height_obj[0] <= 0 : break
+            if effective_main_width <= 4: break
+
+            prefix_note = f"| "
+            start_col_note = 4
+            max_text_width_note = effective_main_width - start_col_note - len(prefix_note)
+            if max_text_width_note < 0 : max_text_width_note = 0
+            lines_used_note = _draw_wrapped_text(stdscr, note, row, start_col_note,
+                                            max_text_width_note, effective_main_width, content_height_obj,
+                                            prefix=prefix_note, subsequent_indent_offset=len(prefix_note),
+                                            attr=curses.color_pair(COLOR_PAIR_PAUSED))
+            row += lines_used_note
+
+
         if len(task_info_to_show):
             lines_used_note = _draw_wrapped_text(stdscr, "└──────── ─── ── ── ─ ─  ─   ─", row, 4,
                 effective_main_width, effective_main_width, content_height_obj,
@@ -864,7 +885,9 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
                 attr=curses.color_pair(COLOR_PAIR_PAUSED))
             row += lines_used_note
 
-        for note_idx, note in enumerate(notes_to_show_preview[:10]):
+        notes_without_unhandled = [n for n in notes_to_show_preview if not n.startswith("*PR* ")]
+
+        for note_idx, note in enumerate(notes_without_unhandled[:10]):
             if content_height_obj[0] <= 0 : break
             if effective_main_width <= 4: break
             prefix_note = f"- "
@@ -876,7 +899,7 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
                                             prefix=prefix_note, subsequent_indent_offset=len(prefix_note))
             row += lines_used_note
 
-        if len(notes_to_show_preview) > 10 and content_height_obj[0] > 0 and effective_main_width > 7:
+        if len(notes_without_unhandled) > 10 and content_height_obj[0] > 0 and effective_main_width > 7:
             stdscr.addstr(row, 4, t('ui_more_notes')[:effective_main_width-4])
             row+=1; content_height_obj[0]-=1
 
@@ -1618,7 +1641,7 @@ def poll_pull_requests(data_lock, data_ref):
                                 send_desktop_notification(t('notification_pr_approved_title', main_task=ticket, sub_task=format_subtask_for_title(subtask_name)), t('notification_pr_approved_body', pr_url=pr_url))
                         else:
                             notes = original_subtask.get("notes", [])
-                            notes_without_unhandled = [n for n in notes if not n.startswith("UNHANDLED")]
+                            notes_without_unhandled = [n for n in notes if not n.startswith("*PR* ")]
                             if len(notes_without_unhandled) < len(notes):
                                 original_subtask["notes"] = notes_without_unhandled
                                 data_changed = True
@@ -1847,17 +1870,6 @@ def main(stdscr):
     review_polling_thread = threading.Thread(target=poll_reviews_needed, args=(), daemon=True)
     review_polling_thread.start()
 
-    #jira_data_thread = threading.Thread(target=jira.jira_data_poller, args=(data_lock, data), daemon=True)
-    #jira_data_thread.start()
-
-    #threading.Thread(target=poll_pull_requests, args=(app_data, data_lock, save_data, permanent_notifications), daemon=True).start()
-
-    ####commented
-    #threading.Thread(target=jira_data_poller, args=(app_data, data_lock, permanent_notifications), daemon=True).start()
-
-    #threading.Thread(target=event_notification_poller, args=(app_data, data_lock, sent_notifications), daemon=True).start()
-    #threading.Thread(target=poll_reviews_needed, args=(reviews_for_display, reviews_lock, sent_review_notifications), daemon=True).start()
-
     clock_refresh_interval = 1.0; last_clock_refresh_time = 0.0
     content_refresh_interval = 10.0; last_content_refresh_time = 0.0
     request_full_redraw = True
@@ -1937,8 +1949,9 @@ def main(stdscr):
 
                 ##### JIRA LOGIN CHECK ######
                 if t('jira_login_prompt') in permanent_notifications or t('jira_session_error') in permanent_notifications:
+                    logging.error("Restarting app for login")
+                    permanent_notifications = []
                     return "RESTART_FOR_LOGIN"
-                    #get_and_save_jira_session(permanent_notifications)
 
                 if key == curses.KEY_LEFT:
                     current_view = VIEW_DAILY_NOTES
@@ -2121,12 +2134,7 @@ if __name__ == "__main__":
     while True:
 
         try:
-            #get_and_save_jira_session(permanent_notifications)
-            #print("asd")
-            #time.sleep(3)
-
             result = curses.wrapper(main)
-            #print(result)
 
         except curses.error as e:
             print(t('error_curses', e=e), file=sys.stderr)

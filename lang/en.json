@@ -109,7 +109,7 @@
     "cmd_info_switched_to_task": "Switched to active: {name}",
     "cmd_err_unknown_command": "Unknown command: {command}",
     "polling_err": "Error polling {url}: {e}",
-    "polling_note_unhandled_comment": "UNHANDLED PR COMMENT from {author}: {text}",
+    "polling_note_unhandled_comment": "*PR* {author}: {text}",
     "polling_note_approved": "PR Approved",
     "notification_pr_unhandled_title": "{main_task}: {sub_task}",
     "notification_pr_unhandled_body": "New comments on your PR:\n{pr_url}",
@@ -125,5 +125,8 @@
     "notification_review_body": "{title}: \n{repo}",
     "ui_reviews_header": "--- Reviews Needed ---",
     "jira_session_error": "Jira session expired. Press any key to login!!!",
-    "jira_login_prompt": "Not logged in to Jira. Press any key to login!!!"
+    "jira_login_prompt": "Not logged in to Jira. Press any key to login!!!",
+    "jira_auth_error": "Jira auth error. Press any key to login!!!",
+    "jira_http_error": "Jira 404 error!",
+    "jira_generic_error": "Jira generic error. Press any key to login!!!"
 }

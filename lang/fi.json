@@ -109,7 +109,7 @@
     "cmd_info_switched_to_task": "Vaihdettu aktiiviseksi: {name}",
     "cmd_err_unknown_command": "Tuntematon komento: {command}",
     "polling_err": "Virhe pollatessa {url}: {e}",
-    "polling_note_unhandled_comment": "KÄSITTELEMÄTÖN PR-KOMMENTTI käyttäjältä {author}: {text}",
+    "polling_note_unhandled_comment": "*PR* {author}: {text}",
     "polling_note_approved": "PR Hyväksytty",
     "notification_pr_unhandled_title": "{main_task}: {sub_task}",
     "notification_pr_unhandled_body": "Uusia kommentteja PR:ssä:\n{pr_url}",
@@ -123,5 +123,10 @@
     "notification_event_body": "{details}",
     "notification_review_title": "--- PR ---",
     "notification_review_body": "{title}\n{repo}",
-    "ui_reviews_header": "--- Uudet pull requestit ---"
+    "ui_reviews_header": "--- Uudet pull requestit ---",
+    "jira_session_error": "Jira sessio vanhentui. Kirjaudu painamalla enteriä!!!",
+    "jira_login_prompt": "Et ole kirjautunut Jiraan. Kirjaudu painamalla enteriä!!!",
+    "jira_auth_error": "Jira käyttöoikeusvirhe. Kirjaudu painamalla enteriä!!!",
+    "jira_http_error": "Jira 404 virhe!",
+    "jira_generic_error": "Jira yleinen virhe. Kirjaudu painamalla enteriä!!!"
 }
