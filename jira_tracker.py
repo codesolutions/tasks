@@ -117,22 +117,38 @@ def load_data():
     data.setdefault("paused_tasks", [])
     data.setdefault("recurring_events", [])
     data.setdefault("daily_notes", {})
+    data.setdefault("show_hidden_tasks", False)
 
     # Data migration and cleanup logic
     for ticket_name, sub_tasks_for_ticket in data.get("sub_tasks", {}).items():
         if isinstance(sub_tasks_for_ticket, dict):
             for sub_task_name, sub_task_details in list(sub_tasks_for_ticket.items()):
                 if not isinstance(sub_task_details, dict):
-                    current_done_status = sub_task_details
-                    sub_tasks_for_ticket[sub_task_name] = {"done": current_done_status, "notes": [], "hidden": False, "pr_url": None, "pr_status": None, "focused": False, "jira_refreshed": None}
+                    current_status = "done" if sub_task_details else "todo"
+                    sub_tasks_for_ticket[sub_task_name] = {"status": current_status, "notes": [], "pr_url": None, "pr_status": None, "jira_refreshed": None}
                 else:
-                    sub_task_details.setdefault("done", False)
+                    # Migrate old status fields to new 'status' field
+                    current_status = sub_task_details.get("status")
+                    if not current_status or current_status not in ["todo", "in_progress", "done", "hidden", "focused"]:
+                        if sub_task_details.get("focused", False):
+                            current_status = "focused"
+                        elif sub_task_details.get("done", False):
+                            current_status = "done"
+                        elif sub_task_details.get("hidden", False):
+                            current_status = "hidden"
+                        else:
+                            current_status = "todo"
+
+                    sub_task_details["status"] = current_status
                     sub_task_details.setdefault("notes", [])
-                    sub_task_details.setdefault("hidden", False)
                     sub_task_details.setdefault("pr_url", None)
                     sub_task_details.setdefault("pr_status", None)
-                    sub_task_details.setdefault("focused", False)
-                    sub_task_details.setdefault("jira_refreshed", False)
+                    sub_task_details.setdefault("jira_refreshed", None)
+
+                    # Clean up old fields
+                    sub_task_details.pop("done", None)
+                    sub_task_details.pop("hidden", None)
+                    sub_task_details.pop("focused", None)
                     # Old field cleanup for migration
                     if "pr_unhandled_comments" in sub_task_details:
                         if sub_task_details["pr_unhandled_comments"] and sub_task_details.get("pr_status") is None:
@@ -560,6 +576,9 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
                         attr_line0 = curses.color_pair(COLOR_PAIR_FOCUSED)
                     else:
 
+                        #permanent_notifications_ref.remove(t('jira_login_prompt'))
+
+
                         subtasks_for_ticket0 = data.get("sub_tasks", {}).get(ticket_name_line0, {})
                         if any(st.get("pr_status") == 'attention_needed' for st in subtasks_for_ticket0.values() if isinstance(st, dict)):
                             attr_line0 = curses.color_pair(COLOR_PAIR_PR_UNHANDLED)
@@ -567,9 +586,9 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
                         elif any(st.get("pr_status") == 'approved' for st in subtasks_for_ticket0.values() if isinstance(st, dict)):
                             attr_line0 = curses.color_pair(COLOR_PAIR_PR_APPROVED)
                             if f"{ticket_name_line0}: PR approved. Please merge!" not in permanent_notifications: permanent_notifications.append(f"{ticket_name_line0}: PR approved. Please merge!")
-                        elif subtasks_for_ticket0 and all(st_details.get("done", False) for st_details in subtasks_for_ticket0.values() if isinstance(st_details, dict)):
+                        elif subtasks_for_ticket0 and all(st_details.get("status") == "done" for st_details in subtasks_for_ticket0.values() if isinstance(st_details, dict)):
                             attr_line0 = curses.color_pair(COLOR_PAIR_TASK_ALL_SUBTASKS_DONE)
-                        elif subtasks_for_ticket0 and all(st_details.get("hidden", False) for st_details in subtasks_for_ticket0.values() if isinstance(st_details, dict)):
+                        elif subtasks_for_ticket0 and all(st_details.get("status") == "hidden" for st_details in subtasks_for_ticket0.values() if isinstance(st_details, dict)):
                             attr_line0 = curses.color_pair(COLOR_PAIR_TASK_ALL_SUBTASKS_DONE)
                         elif not subtasks_for_ticket0:
                             attr_line0 = curses.color_pair(COLOR_PAIR_TASK_ALL_SUBTASKS_DONE)
@@ -622,10 +641,10 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
                 elif any(st.get("pr_status") == 'approved' for st in subtasks_for_this_panel_ticket.values() if isinstance(st, dict)):
                     item_attr = curses.color_pair(COLOR_PAIR_PR_APPROVED)
                     if f"{ticket_name_in_panel}: PR approved. Please merge!" not in permanent_notifications: permanent_notifications.append(f"{ticket_name_in_panel}: PR approved. Please merge!")
-                elif subtasks_for_this_panel_ticket and all(st_details.get("done", False) for st_details in subtasks_for_this_panel_ticket.values() if isinstance(st_details, dict)):
+                elif subtasks_for_this_panel_ticket and all(st_details.get("status") == "done" for st_details in subtasks_for_this_panel_ticket.values() if isinstance(st_details, dict)):
                     item_attr = curses.color_pair(COLOR_PAIR_TASK_ALL_SUBTASKS_DONE)
-                elif subtasks_for_this_panel_ticket and all(st_details.get("hidden", False) for st_details in subtasks_for_this_panel_ticket.values() if isinstance(st_details, dict)):
-                    attr_line0 = curses.color_pair(COLOR_PAIR_TASK_ALL_SUBTASKS_DONE)
+                elif subtasks_for_this_panel_ticket and all(st_details.get("status") == "hidden" for st_details in subtasks_for_this_panel_ticket.values() if isinstance(st_details, dict)):
+                    item_attr = curses.color_pair(COLOR_PAIR_TASK_ALL_SUBTASKS_DONE)
                 elif not subtasks_for_this_panel_ticket:
                     attr_line0 = curses.color_pair(COLOR_PAIR_TASK_ALL_SUBTASKS_DONE)
 
@@ -714,8 +733,9 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
         subtask_list_to_use = current_ticket_subtask_list_for_display_arg
         if subtask_list_to_use is None:
             subtasks_dict = data.get("sub_tasks", {}).get(current_ticket, {})
+            show_hidden = data.get("show_hidden_tasks", False)
             # Filter out hidden subtasks for display
-            subtask_list_to_use = [(name, details) for name, details in subtasks_dict.items() if isinstance(details, dict) and not details.get("hidden", False)]
+            subtask_list_to_use = [(name, details) for name, details in subtasks_dict.items() if isinstance(details, dict) and (show_hidden or not details.get("status") == "hidden")]
 
 
         if subtask_list_to_use:
@@ -728,9 +748,18 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
                 if effective_main_width <= 4: break
 
                 jira_ticket_id = inc.helpers.get_jira_ticket_from_url(sub_task_name)
-                is_done = sub_task_details_obj.get("done", False)
-                is_focused = sub_task_details_obj.get("focused", False)
-                status_char = "‼️" if is_focused else "✅" if is_done else "[ ]"
+                status = sub_task_details_obj.get("status", "todo")
+                status_char = ""
+                if status == "focused":
+                    status_char = "‼️"
+                elif status == "done":
+                    status_char = "✅"
+                elif status == "in_progress":
+                    status_char = "🚧"
+                elif status == "hidden":
+                    status_char = "🙈"
+                else:
+                    status_char = "[ ]"
 
                 display_text = jira_ticket_id
                 item_attr = curses.color_pair(COLOR_PAIR_DEFAULT)
@@ -1179,15 +1208,17 @@ def handle_input(data, command_parts, stdscr, current_view_mode, selected_subtas
     elif command == 'h':
         return "TOGGLE_HELP"
 
+    elif command == 't':
+        data["show_hidden_tasks"] = not data.get("show_hidden_tasks", False)
+        return data
+
     elif command == 'd':
         if selected_subtask_idx != -1 and 0 <= selected_subtask_idx < len(current_ticket_subtask_list):
             sub_task_to_hide_name, sub_task_details = current_ticket_subtask_list[selected_subtask_idx]
             if current_ticket_name_val in data.get("sub_tasks", {}) and \
                sub_task_to_hide_name in data["sub_tasks"][current_ticket_name_val]:
-                data["sub_tasks"][current_ticket_name_val][sub_task_to_hide_name]["hidden"] = True
-                data["sub_tasks"][current_ticket_name_val][sub_task_to_hide_name]["done"] = True
-                if sub_task_details.get("focused"):
-                    data["sub_tasks"][current_ticket_name_val][sub_task_to_hide_name]["focused"] = False
+                data["sub_tasks"][current_ticket_name_val][sub_task_to_hide_name]["status"] = "hidden"
+                if data["focused_subtask"] == sub_task_to_hide_name:
                     data["focused_subtask"] = None # Clear global focus if this was the one
                 data_was_modified = True
                 show_notification(stdscr, t('cmd_info_subtask_hidden', name=sub_task_to_hide_name))
@@ -1203,7 +1234,7 @@ def handle_input(data, command_parts, stdscr, current_view_mode, selected_subtas
             sub_task_name_cmd = " ".join(command_parts[1:])
             current_ticket_subtasks = data.setdefault("sub_tasks", {}).setdefault(current_ticket_name_val, {})
             if sub_task_name_cmd not in current_ticket_subtasks:
-                current_ticket_subtasks[sub_task_name_cmd] = {"done": False, "notes": [], "hidden": False, "pr_url": None, "pr_status": None, "focused": False, "jira_refreshed": None}
+                current_ticket_subtasks[sub_task_name_cmd] = {"status": "todo", "notes": [], "pr_url": None, "pr_status": None, "jira_refreshed": None}
                 data_was_modified = True
             else:
                 show_notification(stdscr, t('cmd_err_subtask_exists', name=sub_task_name_cmd))
@@ -1249,23 +1280,23 @@ def handle_input(data, command_parts, stdscr, current_view_mode, selected_subtas
         if current_ticket_name_val and selected_subtask_idx != -1 and \
            0 <= selected_subtask_idx < len(current_ticket_subtask_list):
             sub_task_name, sub_task_details = current_ticket_subtask_list[selected_subtask_idx]
-            is_currently_focused = sub_task_details.get("focused", False)
+            current_status = sub_task_details.get("status", "todo")
 
             # Unfocus all other subtasks in the current ticket
             for st_name, st_details in data["sub_tasks"][current_ticket_name_val].items():
-                st_details["focused"] = False
+                if st_details.get("status") == "focused":
+                    st_details["status"] = "todo" # Or previous status if we want to be more complex
 
-            # Toggle focus for the selected subtask
-            data["sub_tasks"][current_ticket_name_val][sub_task_name]["focused"] = not is_currently_focused
-
-            if not is_currently_focused: # If it's now focused
-                data["focused_ticket"] = current_ticket_name_val
-                data["focused_subtask"] = sub_task_name
-                show_notification(stdscr, t('cmd_info_subtask_focus_set', name=sub_task_name))
-            else: # If it's now unfocused
+            if current_status == "focused":
+                data["sub_tasks"][current_ticket_name_val][sub_task_name]["status"] = "todo"
                 data["focused_ticket"] = None
                 data["focused_subtask"] = None
                 show_notification(stdscr, t('cmd_info_focus_cleared'))
+            else:
+                data["sub_tasks"][current_ticket_name_val][sub_task_name]["status"] = "focused"
+                data["focused_ticket"] = current_ticket_name_val
+                data["focused_subtask"] = sub_task_name
+                show_notification(stdscr, t('cmd_info_subtask_focus_set', name=sub_task_name))
 
             data_was_modified = True
         else:
@@ -1311,12 +1342,13 @@ def handle_input(data, command_parts, stdscr, current_view_mode, selected_subtas
                 data["focused_subtask"] = None
                 for ticket_subtasks in data["sub_tasks"].values():
                     for st in ticket_subtasks.values():
-                        st["focused"] = False
+                        if st.get("status") == "focused":
+                            st["status"] = "todo"
 
                 # Set new focus
                 data["focused_ticket"] = target_ticket
                 if target_subtask:
-                    data["sub_tasks"][target_ticket][target_subtask]["focused"] = True
+                    data["sub_tasks"][target_ticket][target_subtask]["status"] = "focused"
                     data["focused_subtask"] = target_subtask
 
                 data_was_modified = True
@@ -1434,15 +1466,25 @@ def handle_input(data, command_parts, stdscr, current_view_mode, selected_subtas
                     if isinstance(resumed_sub_tasks_raw, dict):
                         for sub_name, sub_details in resumed_sub_tasks_raw.items():
                             if not isinstance(sub_details, dict):
-                                migrated_resumed_sub_tasks[sub_name] = {"done": bool(sub_details), "notes": [], "hidden": False, "pr_url": None, "pr_status": None, "focused": False, "jira_refreshed": None}
+                                migrated_resumed_sub_tasks[sub_name] = {"status": "done" if bool(sub_details) else "todo", "notes": [], "pr_url": None, "pr_status": None, "jira_refreshed": None}
                             else:
-                                sub_details.setdefault("done", False)
+                                current_status = sub_details.get("status", "todo")
+                                if sub_details.get("focused", False):
+                                    current_status = "focused"
+                                elif sub_details.get("done", False):
+                                    current_status = "done"
+                                elif sub_details.get("hidden", False):
+                                    current_status = "hidden"
+
+                                sub_details["status"] = current_status
                                 sub_details.setdefault("notes", [])
-                                sub_details.setdefault("hidden", False)
                                 sub_details.setdefault("pr_url", None)
                                 sub_details.setdefault("pr_status", None)
-                                sub_details.setdefault("focused", False)
-                                sub_details.setdefault("jira_refreshed", False)
+                                sub_details.setdefault("jira_refreshed", None)
+
+                                sub_details.pop("done", None)
+                                sub_details.pop("hidden", None)
+                                sub_details.pop("focused", None)
                                 migrated_resumed_sub_tasks[sub_name] = sub_details
                     data.setdefault("sub_tasks", {})[target_ticket_name_to_activate] = migrated_resumed_sub_tasks
                     data.setdefault("notes", {})[target_ticket_name_to_activate] = resumed_item_details.get('notes', [])
@@ -1454,9 +1496,7 @@ def handle_input(data, command_parts, stdscr, current_view_mode, selected_subtas
                 current_subs = data.setdefault("sub_tasks", {}).setdefault(target_ticket_name_to_activate, {})
                 for sub_name, sub_details in list(current_subs.items()):
                     if not isinstance(sub_details, dict):
-                        current_subs[sub_name] = {"done": bool(sub_details), "notes": [], "hidden": False, "pr_url": None, "pr_status": None, "focused": False, "jira_refreshed": None}
-                    else:
-                        sub_details.setdefault("done", False); sub_details.setdefault("notes", []); sub_details.setdefault("hidden", False); sub_details.setdefault("pr_url", None); sub_details.setdefault("pr_status", None); sub_details.setdefault("focused", False); sub_details.setdefault("jira_refreshed", False)
+                        sub_details.setdefault("status", "todo"); sub_details.setdefault("notes", []); sub_details.setdefault("pr_url", None); sub_details.setdefault("pr_status", None); sub_details.setdefault("jira_refreshed", False)
 
                 data.setdefault("notes", {}).setdefault(target_ticket_name_to_activate, [])
             data_was_modified = True
@@ -1894,9 +1934,10 @@ def main(stdscr):
             current_ticket_subtasks_unfiltered = app_data.get("sub_tasks", {}).get(ticket_name_at_loop_start, {}) if ticket_name_at_loop_start else {}
             current_ticket_subtask_list_visible = []
             if isinstance(current_ticket_subtasks_unfiltered, dict):
+                show_hidden = app_data.get("show_hidden_tasks", False)
                 current_ticket_subtask_list_visible = [
                     (name, details) for name, details in current_ticket_subtasks_unfiltered.items()
-                    if isinstance(details, dict) and not details.get("hidden", False)
+                    if isinstance(details, dict) and (show_hidden or not details.get("status") == "hidden")
                 ]
 
             all_tickets_set_for_cmd = set()
@@ -1953,11 +1994,7 @@ def main(stdscr):
                     permanent_notifications = []
                     return "RESTART_FOR_LOGIN"
 
-                if key == curses.KEY_LEFT:
-                    current_view = VIEW_DAILY_NOTES
-                    current_date_for_daily_notes = date.today()
-                    command_buffer = ""; request_full_redraw = True; selected_note_index = -1
-                elif key == curses.KEY_UP:
+                if key == curses.KEY_UP:
                     if current_ticket_subtask_list_visible:
                         if selected_subtask_index > -1:
                             selected_subtask_index -= 1
@@ -1973,7 +2010,21 @@ def main(stdscr):
                 elif key == '\n' or key == curses.KEY_ENTER:
                     cmd_parts = command_buffer.split()
                     action_processed = False
-                    ticket_changed = False
+                    if not cmd_parts or not cmd_parts[0]:
+                        if selected_subtask_index != -1 and 0 <= selected_subtask_index < len(current_ticket_subtask_list_visible):
+                            sub_task_name, sub_task_details = current_ticket_subtask_list_visible[selected_subtask_index]
+                            if ticket_name_at_loop_start in app_data.get("sub_tasks", {}) and sub_task_name in app_data["sub_tasks"][ticket_name_at_loop_start]:
+                                status_cycle = ["todo", "in_progress", "done"]
+                                current_status = app_data["sub_tasks"][ticket_name_at_loop_start][sub_task_name].get("status", "todo")
+                                try:
+                                    current_index = status_cycle.index(current_status)
+                                    next_index = (current_index + 1) % len(status_cycle)
+                                except ValueError:
+                                    next_index = 0 # Default to 'todo' if status is unknown
+                                app_data["sub_tasks"][ticket_name_at_loop_start][sub_task_name]["status"] = status_cycle[next_index]
+                                save_data(app_data)
+                                action_processed = True
+                                request_full_redraw = True
 
                     if cmd_parts:
                         with data_lock:
@@ -1994,10 +2045,16 @@ def main(stdscr):
                             main_ticket = app_data.get("current_ticket")
                             sub_task = app_data["sub_tasks"][main_ticket].get(sub_task_name)
                             if sub_task:
-                                sub_task["done"] = not sub_task["done"]
+                                status_cycle = ["todo", "in_progress", "done"]
+                                current_status = sub_task.get("status", "todo")
+                                try:
+                                    current_index = status_cycle.index(current_status)
+                                    next_index = (current_index + 1) % len(status_cycle)
+                                except ValueError:
+                                    next_index = 0 # Default to 'todo' if status is unknown
+                                sub_task["status"] = status_cycle[next_index]
                                 # Auto-unfocus if marked done
-                                if sub_task["done"] and sub_task.get("focused"):
-                                    sub_task["focused"] = False
+                                if sub_task["status"] == "done" and app_data.get("focused_subtask") == sub_task_name:
                                     app_data["focused_subtask"] = None
                                     app_data["focused_ticket"] = None
                                 save_data(app_data)
