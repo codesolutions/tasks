@@ -76,9 +76,9 @@ JIRA_BOX_FILE = os.path.join(SCRIPT_DIR, "jira_box2.txt")
 
 # -- Color Pairs --
 (COLOR_PAIR_DEFAULT, COLOR_PAIR_REVERSE, COLOR_PAIR_GREY, COLOR_PAIR_PAUSED,
- COLOR_PAIR_SELECTED, COLOR_PAIR_TASK_ALL_SUBTASKS_DONE, COLOR_PAIR_URGENT_BOX,
+ COLOR_PAIR_SELECTED, COLOR_PAIR_TASK_ALL_SUBTASKS_DONE, COLOR_PAIR_TASK_ALL_SUBTASKS_HIDDEN, COLOR_PAIR_URGENT_BOX,
  COLOR_PAIR_PR_UNHANDLED, COLOR_PAIR_PR_APPROVED, COLOR_PAIR_FOCUSED,
- COLOR_PAIR_PERMANENT_NOTIFICATION, COLOR_PAIR_STANDOUT) = range(1, 13)
+ COLOR_PAIR_PERMANENT_NOTIFICATION, COLOR_PAIR_STANDOUT) = range(1, 14)
 
 # -- Views --
 VIEW_MAIN = "main"
@@ -130,12 +130,12 @@ def load_data():
                     # Migrate old status fields to new 'status' field
                     current_status = sub_task_details.get("status")
                     if not current_status or current_status not in ["todo", "in_progress", "done", "hidden", "focused"]:
-                        if sub_task_details.get("focused", False):
-                            current_status = "focused"
+                        if sub_task_details.get("hidden", False):
+                            current_status = "hidden"
                         elif sub_task_details.get("done", False):
                             current_status = "done"
-                        elif sub_task_details.get("hidden", False):
-                            current_status = "hidden"
+                        elif sub_task_details.get("focused", False):
+                            current_status = "focused"
                         else:
                             current_status = "todo"
 
@@ -586,9 +586,13 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
                         elif any(st.get("pr_status") == 'approved' for st in subtasks_for_ticket0.values() if isinstance(st, dict)):
                             attr_line0 = curses.color_pair(COLOR_PAIR_PR_APPROVED)
                             if f"{ticket_name_line0}: PR approved. Please merge!" not in permanent_notifications: permanent_notifications.append(f"{ticket_name_line0}: PR approved. Please merge!")
-                        elif subtasks_for_ticket0 and all(st_details.get("status") == "done" for st_details in subtasks_for_ticket0.values() if isinstance(st_details, dict)):
-                            attr_line0 = curses.color_pair(COLOR_PAIR_TASK_ALL_SUBTASKS_DONE)
                         elif subtasks_for_ticket0 and all(st_details.get("status") == "hidden" for st_details in subtasks_for_ticket0.values() if isinstance(st_details, dict)):
+                            attr_line0 = curses.color_pair(COLOR_PAIR_TASK_ALL_SUBTASKS_HIDDEN)
+                        elif (subtasks_for_ticket0 and 
+                                not any(st_details.get("status") == "todo" for st_details in subtasks_for_ticket0.values() if isinstance(st_details, dict)) and
+                                not any(st_details.get("status") == "in_progress" for st_details in subtasks_for_ticket0.values() if isinstance(st_details, dict)) and 
+                                any(st_details.get("status") == "done" for st_details in subtasks_for_ticket0.values() if isinstance(st_details, dict))
+                        ):
                             attr_line0 = curses.color_pair(COLOR_PAIR_TASK_ALL_SUBTASKS_DONE)
                         elif not subtasks_for_ticket0:
                             attr_line0 = curses.color_pair(COLOR_PAIR_TASK_ALL_SUBTASKS_DONE)
@@ -641,12 +645,17 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
                 elif any(st.get("pr_status") == 'approved' for st in subtasks_for_this_panel_ticket.values() if isinstance(st, dict)):
                     item_attr = curses.color_pair(COLOR_PAIR_PR_APPROVED)
                     if f"{ticket_name_in_panel}: PR approved. Please merge!" not in permanent_notifications: permanent_notifications.append(f"{ticket_name_in_panel}: PR approved. Please merge!")
-                elif subtasks_for_this_panel_ticket and all(st_details.get("status") == "done" for st_details in subtasks_for_this_panel_ticket.values() if isinstance(st_details, dict)):
-                    item_attr = curses.color_pair(COLOR_PAIR_TASK_ALL_SUBTASKS_DONE)
                 elif subtasks_for_this_panel_ticket and all(st_details.get("status") == "hidden" for st_details in subtasks_for_this_panel_ticket.values() if isinstance(st_details, dict)):
+                    item_attr = curses.color_pair(COLOR_PAIR_TASK_ALL_SUBTASKS_HIDDEN)
+                elif (subtasks_for_this_panel_ticket and 
+                        not any(st_details.get("status") == "todo" for st_details in subtasks_for_this_panel_ticket.values() if isinstance(st_details, dict)) and
+                        not any(st_details.get("status") == "in_progress" for st_details in subtasks_for_this_panel_ticket.values() if isinstance(st_details, dict)) and 
+                        any(st_details.get("status") == "done" for st_details in subtasks_for_this_panel_ticket.values() if isinstance(st_details, dict))
+                ):
                     item_attr = curses.color_pair(COLOR_PAIR_TASK_ALL_SUBTASKS_DONE)
+                
                 elif not subtasks_for_this_panel_ticket:
-                    attr_line0 = curses.color_pair(COLOR_PAIR_TASK_ALL_SUBTASKS_DONE)
+                    item_attr = curses.color_pair(COLOR_PAIR_TASK_ALL_SUBTASKS_DONE)
 
 
             full_text_for_line = f"{i+1}. {ticket_name_in_panel}"
@@ -1469,12 +1478,12 @@ def handle_input(data, command_parts, stdscr, current_view_mode, selected_subtas
                                 migrated_resumed_sub_tasks[sub_name] = {"status": "done" if bool(sub_details) else "todo", "notes": [], "pr_url": None, "pr_status": None, "jira_refreshed": None}
                             else:
                                 current_status = sub_details.get("status", "todo")
-                                if sub_details.get("focused", False):
-                                    current_status = "focused"
+                                if sub_details.get("hidden", False):
+                                    current_status = "hidden"
                                 elif sub_details.get("done", False):
                                     current_status = "done"
-                                elif sub_details.get("hidden", False):
-                                    current_status = "hidden"
+                                elif sub_details.get("focused", False):
+                                    current_status = "focused"
 
                                 sub_details["status"] = current_status
                                 sub_details.setdefault("notes", [])
@@ -1590,7 +1599,7 @@ def poll_pull_requests(data_lock, data_ref):
                     pr_url = original_subtask.get("pr_url")
                     pr_status = original_subtask.get("pr_status")
 
-                    if original_subtask.get("hidden") or not pr_url or pr_status == 'merged':
+                    if original_subtask.get("status") == "hidden" or not pr_url or pr_status == 'merged':
                         continue
 
                     api_url = convert_to_api_url(pr_url)
@@ -1847,7 +1856,7 @@ def event_notification_poller(data_lock, data_ref):
 
 
 def main(stdscr):
-    global COLOR_PAIR_DEFAULT, COLOR_PAIR_REVERSE, COLOR_PAIR_GREY, COLOR_PAIR_PAUSED, COLOR_PAIR_SELECTED, COLOR_PAIR_TASK_ALL_SUBTASKS_DONE, COLOR_PAIR_URGENT_BOX, COLOR_PAIR_PR_UNHANDLED, COLOR_PAIR_PR_APPROVED, COLOR_PAIR_FOCUSED, COLOR_PAIR_PERMANENT_NOTIFICATION, COLOR_PAIR_STANDOUT
+    global COLOR_PAIR_DEFAULT, COLOR_PAIR_REVERSE, COLOR_PAIR_GREY, COLOR_PAIR_PAUSED, COLOR_PAIR_SELECTED, COLOR_PAIR_TASK_ALL_SUBTASKS_DONE, COLOR_PAIR_TASK_ALL_SUBTASKS_HIDDEN, COLOR_PAIR_URGENT_BOX, COLOR_PAIR_PR_UNHANDLED, COLOR_PAIR_PR_APPROVED, COLOR_PAIR_FOCUSED, COLOR_PAIR_PERMANENT_NOTIFICATION, COLOR_PAIR_STANDOUT
     global app_data, permanent_notifications
     stop_event = threading.Event()
     jira_cache = load_jira_cache()
@@ -1872,6 +1881,7 @@ def main(stdscr):
         curses.init_pair(COLOR_PAIR_PAUSED, curses.COLOR_YELLOW, bg)
         curses.init_pair(COLOR_PAIR_SELECTED, curses.COLOR_BLACK, curses.COLOR_CYAN)
         curses.init_pair(COLOR_PAIR_TASK_ALL_SUBTASKS_DONE, curses.COLOR_YELLOW, bg)
+        curses.init_pair(COLOR_PAIR_TASK_ALL_SUBTASKS_HIDDEN, curses.COLOR_YELLOW, bg)
         curses.init_pair(COLOR_PAIR_URGENT_BOX, curses.COLOR_RED, bg)
         curses.init_pair(COLOR_PAIR_PR_UNHANDLED, curses.COLOR_WHITE, curses.COLOR_RED)
         curses.init_pair(COLOR_PAIR_PR_APPROVED, curses.COLOR_BLACK, curses.COLOR_GREEN)
