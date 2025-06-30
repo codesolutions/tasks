@@ -1875,13 +1875,16 @@ def main(stdscr):
     try:
         curses.start_color()
         bg = curses.COLOR_BLACK
+        CUSTOM_GRAY_COLOR_ID = 8
+        curses.init_color(CUSTOM_GRAY_COLOR_ID, 500, 500, 500)
+
         curses.init_pair(COLOR_PAIR_DEFAULT, curses.COLOR_WHITE, bg)
         curses.init_pair(COLOR_PAIR_REVERSE, curses.COLOR_BLACK, curses.COLOR_WHITE)
         curses.init_pair(COLOR_PAIR_GREY, curses.COLOR_BLUE, bg)
         curses.init_pair(COLOR_PAIR_PAUSED, curses.COLOR_YELLOW, bg)
         curses.init_pair(COLOR_PAIR_SELECTED, curses.COLOR_BLACK, curses.COLOR_CYAN)
-        curses.init_pair(COLOR_PAIR_TASK_ALL_SUBTASKS_DONE, curses.COLOR_YELLOW, bg)
-        curses.init_pair(COLOR_PAIR_TASK_ALL_SUBTASKS_HIDDEN, curses.COLOR_YELLOW, bg)
+        curses.init_pair(COLOR_PAIR_TASK_ALL_SUBTASKS_DONE, curses.COLOR_GREEN, bg)
+        curses.init_pair(COLOR_PAIR_TASK_ALL_SUBTASKS_HIDDEN, CUSTOM_GRAY_COLOR_ID, bg)
         curses.init_pair(COLOR_PAIR_URGENT_BOX, curses.COLOR_RED, bg)
         curses.init_pair(COLOR_PAIR_PR_UNHANDLED, curses.COLOR_WHITE, curses.COLOR_RED)
         curses.init_pair(COLOR_PAIR_PR_APPROVED, curses.COLOR_BLACK, curses.COLOR_GREEN)
