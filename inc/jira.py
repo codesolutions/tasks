@@ -41,54 +41,68 @@ try:
 except ImportError:
     SELENIUM_AVAILABLE = False
 
-# --- JIRA INTEGRATION ---
-def get_and_save_jira_session(permanent_notifications_ref):
-    global config
+
+
+def get_and_save_web_session(service_name, login_url, session_file, driver_path, permanent_notifications_ref):
+    """
+    Handles interactive browser login to capture session cookies for a given service.
+    
+    Args:
+        service_name (str): The name of the service (e.g., "Jira", "Trello").
+        login_url (str): The URL to open for the user to log in.
+        session_file (str): The path to save the session cookie file.
+        driver_path (str): Path to the chromedriver executable.
+        permanent_notifications_ref (list): A reference to the list of permanent notifications.
+
+    Returns:
+        bool: True if the session was captured successfully, False otherwise.
+    """
     if not SELENIUM_AVAILABLE:
-        permanent_notifications_ref.append("ERROR: Selenium library not found. Please run 'pip install selenium'.")
+        permanent_notifications_ref.append(f"ERROR: Selenium library not found for {service_name} login.")
         return False
 
-    jira_url = config.get("JIRA_URL")
-    driver_path = config.get("CHROME_DRIVER_PATH")
-    session_file = os.path.join(SCRIPT_DIR, config.get("JIRA_SESSION_FILE"))
-
-    if not jira_url or "YOUR_ORG" in jira_url or not os.path.exists(driver_path):
-        permanent_notifications_ref.append("ERROR: JIRA_URL or CHROME_DRIVER_PATH is invalid in config.json")
+    if not login_url or not os.path.exists(driver_path):
+        permanent_notifications_ref.append(f"ERROR: URL or CHROME_DRIVER_PATH is invalid for {service_name} in config.json")
         return False
 
-    print("\n--- Jira Login Process ---")
+    print(f"\n--- {service_name} Login Process ---")
     print("-> Starting browser...")
     try:
         service = Service(executable_path=driver_path)
         driver = webdriver.Chrome(service=service, options=Options())
-        driver.get(jira_url)
+        driver.get(login_url)
 
         print("\n" + "="*50)
-        print("!!! ACTION REQUIRED !!!")
-        print("A browser window has been opened. Please log in to Jira.")
+        print(f"!!! ACTION REQUIRED: {service_name} !!!")
+        print(f"A browser window has been opened. Please log in to {service_name}.")
         print("Complete the entire login process, including any SSO or MFA.")
-        input("===> Once you are fully logged in, press Enter here to continue...")
+        input(f"===> Once you are fully logged in to {service_name}, press Enter here to continue...")
         print("="*50 + "\n")
 
         print("-> Capturing session data...")
         cookies = driver.get_cookies()
         if not cookies:
-            print("[ERROR] No cookies were captured. Did you log in successfully?")
+            print(f"[ERROR] No cookies were captured for {service_name}. Did you log in successfully?")
             driver.quit()
             return False
 
-        with open(session_file, 'wb') as f: pickle.dump(cookies, f)
-        print(f"-> Session data saved successfully to '{session_file}'!")
+        full_session_path = os.path.join(SCRIPT_DIR, session_file)
+        with open(full_session_path, 'wb') as f:
+            pickle.dump(cookies, f)
+        print(f"-> {service_name} session data saved successfully to '{full_session_path}'!")
 
-        if t('jira_login_prompt') in permanent_notifications:
-            permanent_notifications_ref.remove(t('jira_login_prompt'))
+        if f"{t('jira_login_prompt', service=service_name)}" in permanent_notifications_ref:
+            permanent_notifications_ref.remove(f"{t('jira_login_prompt', service=service_name)}")
 
         driver.quit()
         return True
     except Exception as e:
-        print(f"[ERROR] Failed to get Jira session. Check CHROME_DRIVER_PATH.")
+        print(f"[ERROR] Failed to get {service_name} session. Check CHROME_DRIVER_PATH.")
         print(f"   Details: {e}")
         return False
+
+
+
 
 
 
@@ -111,6 +125,49 @@ def save_jira_cache(cache_to_save, lock_to_use):
             logging.info(f"File save failed: {JIRA_CACHE_FILE}")
             pass
 
+def get_trello_card_details(card_id, permanent_notifications_ref):
+    # https://trello.com/1/cards/TEAYSza2?fields=id&actions=commentCard%2CcopyCommentCard%2CcreateCard%2CcreateInboxCard%2CcopyCard%2CcopyInboxCard&actions_display=true&action_reactions=true&actions_limit=50
+    global config
+    logging.info(f"Get trello card {card_id}")
+    session_file = os.path.join(SCRIPT_DIR, config.get("TRELLO_SESSION_FILE"))
+    jira_base_url = config.get("TRELLO_URL")
+
+    if not os.path.exists(session_file):
+        if f"{t('jira_login_prompt', service='Trello')}" not in permanent_notifications_ref: permanent_notifications_ref.append(f"{t('jira_login_prompt', service='Trello')}")
+        return None
+
+    session = requests.Session()
+    try:
+        with open(session_file, 'rb') as f:
+            for cookie in pickle.load(f):
+                session.cookies.set(cookie['name'], cookie['value'], domain=cookie['domain'])
+    except Exception:
+        if t('jira_session_error') not in permanent_notifications_ref: permanent_notifications_ref.append(t('jira_session_error'))
+        logging.info(f"{t('jira_session_error')}")
+        return None
+
+
+    issue_url = f'{jira_base_url}/1/cards/{card_id}?fields=id&actions=commentCard%2CcopyCommentCard%2CcreateCard%2CcreateInboxCard%2CcopyCard%2CcopyInboxCard&actions_display=true&action_reactions=true&actions_limit=50'
+
+    try:
+        issue_response = session.get(issue_url, timeout=15)
+        issue_response.raise_for_status()
+        issue_data = issue_response.json()
+
+        
+
+        return issue_data
+    except requests.exceptions.HTTPError as e:
+        logging.error(f"Failed to get: {issue_url}")
+        msg = t('jira_auth_error') if e.response.status_code in [401, 403] else t('jira_http_error', status=e.response.status_code)
+        if msg not in permanent_notifications_ref: permanent_notifications_ref.append(msg)
+        if f"{t('jira_login_prompt', service='Trello')}" not in permanent_notifications_ref: permanent_notifications_ref.append(f"{t('jira_login_prompt', service='Trello')}")
+    except requests.exceptions.RequestException as e:
+        msg = t('jira_generic_error', e=str(e))
+        if msg not in permanent_notifications_ref: permanent_notifications_ref.append(msg)
+        if f"{t('jira_login_prompt', service='Trello')}" not in permanent_notifications_ref: permanent_notifications_ref.append(f"{t('jira_login_prompt', service='Trello')}")
+    return None
+
 def get_jira_issue_details(issue_id, permanent_notifications_ref):
     global config
     logging.info(f"Get jira issue {issue_id}")
@@ -118,7 +175,7 @@ def get_jira_issue_details(issue_id, permanent_notifications_ref):
     jira_base_url = config.get("JIRA_URL")
 
     if not os.path.exists(session_file):
-        if t('jira_login_prompt') not in permanent_notifications_ref: permanent_notifications_ref.append(t('jira_login_prompt'))
+        if f"{t('jira_login_prompt', service='Jira')}" not in permanent_notifications_ref: permanent_notifications_ref.append(f"{t('jira_login_prompt', service='Jira')}")
         return None, None
 
     session = requests.Session()
@@ -151,11 +208,11 @@ def get_jira_issue_details(issue_id, permanent_notifications_ref):
         logging.error(f"Failed to get: {issue_url}")
         msg = t('jira_auth_error') if e.response.status_code in [401, 403] else t('jira_http_error', status=e.response.status_code)
         if msg not in permanent_notifications_ref: permanent_notifications_ref.append(msg)
-        if t('jira_login_prompt') not in permanent_notifications_ref: permanent_notifications_ref.append(t('jira_login_prompt'))
+        if f"{t('jira_login_prompt', service='Jira')}" not in permanent_notifications_ref: permanent_notifications_ref.append(f"{t('jira_login_prompt', service='Jira')}")
     except requests.exceptions.RequestException as e:
         msg = t('jira_generic_error', e=str(e))
         if msg not in permanent_notifications_ref: permanent_notifications_ref.append(msg)
-        if t('jira_login_prompt') not in permanent_notifications_ref: permanent_notifications_ref.append(t('jira_login_prompt'))
+        if f"{t('jira_login_prompt', service='Jira')}" not in permanent_notifications_ref: permanent_notifications_ref.append(f"{t('jira_login_prompt', service='Jira')}")
     return None, None
 
 
@@ -169,6 +226,8 @@ def jira_queue_worker(stop_event, permanent_notifications_ref, cache_ref, lock_r
 
             # Fetch new data
             issue_data, remotelink_data = get_jira_issue_details(issue_id, permanent_notifications_ref)
+            
+            #logging.debug(get_trello_card_details("TEAYSza2", permanent_notifications_ref))
 
             # If data was fetched successfully, update the SHARED cache
             if issue_data:

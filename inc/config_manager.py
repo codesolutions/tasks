@@ -23,7 +23,9 @@ def load_config():
         "BROWSER_COMMAND": ["/usr/bin/google-chrome", "--profile-directory=Profile 1", "--new-window"],
         "JIRA_URL": "https://YOUR_ORG.atlassian.net",
         "JIRA_SESSION_FILE": "jira_session.pkl",
-        "CHROME_DRIVER_PATH": "path/to/your/chromedriver"
+        "CHROME_DRIVER_PATH": "path/to/your/chromedriver",
+        "TRELLO_URL": "https://trello.com",
+        "TRELLO_SESSION_FILE": "trello_session.pkl"
     }
     try:
         with open(config_path, 'r', encoding='utf-8') as f:

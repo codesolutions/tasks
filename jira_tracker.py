@@ -25,7 +25,7 @@ from inc.jira import (
     jira_queue_worker,  # Import the new worker
     jira_request_queue, # Import the queue
     jira_in_flight,     # Import the in-flight tracker
-    get_and_save_jira_session,  # old
+    get_and_save_web_session,  # old
     # jira_data_poller, # old
     config as jira_config
 )
@@ -488,7 +488,7 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
         cache_copy = jira_cache.copy()
 
     # Define the cache timeout (10 minutes = 600 seconds) as you suggested
-    JIRA_CACHE_TIMEOUT = 600
+    JIRA_CACHE_TIMEOUT = 60
     now = time.time()
 
     display_right_panel = bool(all_displayable_tickets)
@@ -817,6 +817,9 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
         notes_to_show_preview = []
         task_info_to_show = []
         notes_title_preview = ""
+        jira_comments = []
+        trello_link = ""
+
         if selected_subtask_idx != -1 and 0 <= selected_subtask_idx < len(subtask_list_to_use):
             sel_sub_name, sel_sub_details = subtask_list_to_use[selected_subtask_idx]
             sel_sub_name = inc.helpers.get_jira_ticket_from_url(sel_sub_name)
@@ -838,6 +841,7 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
 
 
             cached_item = cache_copy.get(sel_sub_name, {})
+            
 
             if cached_item:
                 status = cached_item.get('data', {}).get('fields', {}).get('status', {}).get('name', 'N/A')
@@ -848,19 +852,34 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
                     status_icon = "🚧"
                 elif status == "In Review":
                     status_icon = "👀"
-                elif status == "Todo":
+                elif status == "To Do":
                     status_icon = "📌"
                 elif status == "Backlog":
                     status_icon = "🗂️"
 
+                
 
                 vf_link = next((l.get("object",{}).get("url") for l in cached_item.get('remotelinks',[]) if l.get("globalId") == "VF - Log Hours"), "N/A")
-                task_info_to_show.insert(0, f"{vf_link}")
+                task_info_to_show.insert(0, f"VF: {vf_link}")
+
+                jira_description = cached_item.get('data', {}).get('fields', {}).get('description', "")
+                
+                if (jira_description and isinstance(jira_description, str)):
+                    # API v2 way, no objects
+                    pattern = r"(https://trello\.com/c/[^]]+)"
+                    match = re.search(pattern, jira_description)
+                    if match:
+                        trello_link = match.group(0)
+
+                        task_info_to_show.insert(0, f"Trello: {trello_link}")
 
                 jira_link = f"{inc.config_manager.config.get('JIRA_URL')}/browse/{sel_sub_name}"
                 task_info_to_show.insert(0, f"{status_icon} {jira_link}")
 
                 summary = cached_item.get('data', {}).get('fields', {}).get('summary', {})
+                jira_comments = list(reversed(cached_item.get('data', {}).get('fields', {}).get('comment', {}).get('comments', {})))
+                
+                
 
                 sub_task_with_desc = f"{sel_sub_name} {summary}"
 
@@ -880,7 +899,7 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
 
 
         if len(task_info_to_show):
-            lines_used_note = _draw_wrapped_text(stdscr, "┌──────── ─── ── ── ─ ─  ─   ─", row, 4,
+            lines_used_note = _draw_wrapped_text(stdscr, "┌─────INFO─── ─── ── ── ─ ─  ─   ─", row, 4,
                 effective_main_width, effective_main_width, content_height_obj,
                 prefix="", subsequent_indent_offset=0,
                 attr=curses.color_pair(COLOR_PAIR_PAUSED))
@@ -917,11 +936,50 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
 
 
         if len(task_info_to_show):
-            lines_used_note = _draw_wrapped_text(stdscr, "└──────── ─── ── ── ─ ─  ─   ─", row, 4,
+            lines_used_note = _draw_wrapped_text(stdscr, "└──────────── ─── ── ── ─ ─  ─   ─", row, 4,
                 effective_main_width, effective_main_width, content_height_obj,
                 prefix="", subsequent_indent_offset=0,
                 attr=curses.color_pair(COLOR_PAIR_PAUSED))
             row += lines_used_note
+
+
+
+        if len(task_info_to_show):
+            lines_used_note = _draw_wrapped_text(stdscr, "┌─────JIRA─── ─── ── ── ─ ─  ─   ─", row, 4,
+                effective_main_width, effective_main_width, content_height_obj,
+                prefix="", subsequent_indent_offset=0,
+                attr=curses.color_pair(COLOR_PAIR_STANDOUT))
+            row += lines_used_note
+        for note_idx, note in enumerate(jira_comments[:5]):
+            note_body = note.get("body", "")
+            comment_date = note.get("updated", "")
+            comment_date = comment_date[:-2] + ':' + comment_date[-2:]
+            dt = datetime.fromisoformat(comment_date) 
+
+            note_body = re.sub(r'\[~.*?\]', 'USER', note_body)
+            note_body = note_body.replace("\n", " ")
+            
+            if content_height_obj[0] <= 0 : break
+            if effective_main_width <= 4: break
+            prefix_note = f"| "
+            start_col_note = 4
+            max_text_width_note = effective_main_width - start_col_note - len(prefix_note)
+
+            note_body = dt.strftime('%d.%m. %H:%M') + ": " + note_body[0:max_text_width_note - 17] + "..."
+
+            if max_text_width_note < 0 : max_text_width_note = 0
+            lines_used_note = _draw_wrapped_text(stdscr, note_body, row, start_col_note,
+                                            max_text_width_note, effective_main_width, content_height_obj,
+                                            prefix=prefix_note, subsequent_indent_offset=len(prefix_note),
+                                            attr=curses.color_pair(COLOR_PAIR_STANDOUT))
+            row += lines_used_note
+        if len(task_info_to_show):
+            lines_used_note = _draw_wrapped_text(stdscr, "└──────────── ─── ── ── ─ ─  ─   ─", row, 4,
+                effective_main_width, effective_main_width, content_height_obj,
+                prefix="", subsequent_indent_offset=0,
+                attr=curses.color_pair(COLOR_PAIR_STANDOUT))
+            row += lines_used_note
+
 
         notes_without_unhandled = [n for n in notes_to_show_preview if not n.startswith("*PR* ")]
 
@@ -1890,7 +1948,7 @@ def main(stdscr):
         curses.init_pair(COLOR_PAIR_PR_APPROVED, curses.COLOR_BLACK, curses.COLOR_GREEN)
         curses.init_pair(COLOR_PAIR_FOCUSED, curses.COLOR_BLACK, curses.COLOR_YELLOW)
         curses.init_pair(COLOR_PAIR_PERMANENT_NOTIFICATION, curses.COLOR_BLACK, curses.COLOR_RED)
-        curses.init_pair(COLOR_PAIR_STANDOUT, curses.A_STANDOUT, curses.COLOR_WHITE)
+        curses.init_pair(COLOR_PAIR_STANDOUT, curses.COLOR_CYAN, curses.COLOR_BLACK)
 
     except: pass
 
@@ -2002,12 +2060,17 @@ def main(stdscr):
             if current_view == VIEW_MAIN:
 
                 ##### JIRA LOGIN CHECK ######
-                if t('jira_login_prompt') in permanent_notifications or t('jira_session_error') in permanent_notifications:
+                if f"{t('jira_login_prompt', service='Trello')}" in permanent_notifications or f"{t('jira_login_prompt', service='Jira')}" in permanent_notifications or t('jira_session_error') in permanent_notifications:
                     logging.error("Restarting app for login")
                     permanent_notifications = []
                     return "RESTART_FOR_LOGIN"
 
-                if key == curses.KEY_UP:
+                if key == curses.KEY_LEFT:
+                    current_view = VIEW_DAILY_NOTES
+                    current_date_for_daily_notes = date.today()
+                    command_buffer = ""; request_full_redraw = True; selected_note_index = -1
+
+                elif key == curses.KEY_UP:
                     if current_ticket_subtask_list_visible:
                         if selected_subtask_index > -1:
                             selected_subtask_index -= 1
@@ -2038,6 +2101,8 @@ def main(stdscr):
                                 save_data(app_data)
                                 action_processed = True
                                 request_full_redraw = True
+
+                    ticket_changed = False
 
                     if cmd_parts:
                         with data_lock:
@@ -2081,7 +2146,7 @@ def main(stdscr):
                     command_buffer = ""
                     request_full_redraw = True
 
-                elif key not in [curses.KEY_UP, curses.KEY_DOWN, curses.KEY_BTAB, 27, curses.KEY_LEFT, curses.KEY_RIGHT]:
+                elif key not in [curses.KEY_UP, curses.KEY_DOWN, curses.KEY_BTAB, 27]:
                     if isinstance(key, str) and key.isprintable():
                         max_len = (width - 1) - len("> ") if width > 0 else 0
                         if len(command_buffer) < max_len:
@@ -2201,6 +2266,8 @@ if __name__ == "__main__":
     inc.config_manager.load_translations()
     result = "EXIT"
 
+  
+
     while True:
 
         try:
@@ -2228,7 +2295,22 @@ if __name__ == "__main__":
                 print(t('error_terminal_restore', e_cleanup=e_cleanup), file=sys.stderr)
 
         if result == "RESTART_FOR_LOGIN":
-            get_and_save_jira_session(permanent_notifications)
+            get_and_save_web_session(
+                service_name="Jira",
+                login_url=inc.config_manager.config.get("JIRA_URL"),
+                session_file=inc.config_manager.config.get("JIRA_SESSION_FILE"),
+                driver_path=inc.config_manager.config.get("CHROME_DRIVER_PATH"),
+                permanent_notifications_ref=permanent_notifications
+            )
+
+            get_and_save_web_session(
+                service_name="Trello",
+                login_url=f"{inc.config_manager.config.get('TRELLO_URL')}/login",
+                session_file=inc.config_manager.config.get("TRELLO_SESSION_FILE"),
+                driver_path=inc.config_manager.config.get("CHROME_DRIVER_PATH"),
+                permanent_notifications_ref=permanent_notifications
+            )
+
             print("\nLogin process finished. Restarting application in 3 seconds...")
             time.sleep(3)
             continue

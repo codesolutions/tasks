@@ -125,7 +125,7 @@
     "notification_review_body": "{title}: \n{repo}",
     "ui_reviews_header": "--- Reviews Needed ---",
     "jira_session_error": "Jira session expired. Press any key to login!!!",
-    "jira_login_prompt": "Not logged in to Jira. Press any key to login!!!",
+    "jira_login_prompt": "Not logged in to {service}. Press any key to login!!!",
     "jira_auth_error": "Jira auth error. Press any key to login!!!",
     "jira_http_error": "Jira 404 error!",
     "jira_generic_error": "Jira generic error. Press any key to login!!!"

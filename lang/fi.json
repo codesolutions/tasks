@@ -125,7 +125,7 @@
     "notification_review_body": "{title}\n{repo}",
     "ui_reviews_header": "--- Uudet pull requestit ---",
     "jira_session_error": "Jira sessio vanhentui. Kirjaudu painamalla enteriä!!!",
-    "jira_login_prompt": "Et ole kirjautunut Jiraan. Kirjaudu painamalla enteriä!!!",
+    "jira_login_prompt": "Kirjaudu palveluun {service} painamalla enteriä!!!",
     "jira_auth_error": "Jira käyttöoikeusvirhe. Kirjaudu painamalla enteriä!!!",
     "jira_http_error": "Jira 404 virhe!",
     "jira_generic_error": "Jira yleinen virhe. Kirjaudu painamalla enteriä!!!"

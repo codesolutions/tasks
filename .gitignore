@@ -6,6 +6,7 @@ jira_box.txt
 jira_box2.txt
 jira_cache.pkl
 jira_session.pkl
+trello_session.pkl
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
