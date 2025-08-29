@@ -7,6 +7,7 @@ import threading
 import logging
 import sys
 import queue
+import re
 
 from . import config_manager
 from inc.helpers import get_jira_ticket_from_url, t
@@ -57,6 +58,13 @@ def get_and_save_web_session(service_name, login_url, session_file, driver_path,
     Returns:
         bool: True if the session was captured successfully, False otherwise.
     """
+
+    print(f"\n--- {service_name} Login Process ---")
+
+    print(f"\n--- {login_url} login url debug ---")
+    print(f"\n--- {driver_path} driver path ---")
+    time.sleep(5)
+
     if not SELENIUM_AVAILABLE:
         permanent_notifications_ref.append(f"ERROR: Selenium library not found for {service_name} login.")
         return False
@@ -126,6 +134,7 @@ def save_jira_cache(cache_to_save, lock_to_use):
             pass
 
 def get_trello_card_details(card_id, permanent_notifications_ref):
+    
     # https://trello.com/1/cards/TEAYSza2?fields=id&actions=commentCard%2CcopyCommentCard%2CcreateCard%2CcreateInboxCard%2CcopyCard%2CcopyInboxCard&actions_display=true&action_reactions=true&actions_limit=50
     global config
     logging.info(f"Get trello card {card_id}")
@@ -149,23 +158,25 @@ def get_trello_card_details(card_id, permanent_notifications_ref):
 
     issue_url = f'{jira_base_url}/1/cards/{card_id}?fields=id&actions=commentCard%2CcopyCommentCard%2CcreateCard%2CcreateInboxCard%2CcopyCard%2CcopyInboxCard&actions_display=true&action_reactions=true&actions_limit=50'
 
+    
+    test = session.get('https://trello.com/u/u/boards')
+    if test.status_code != 200:
+        if f"{t('jira_login_prompt', service='Trello')}" not in permanent_notifications_ref: 
+            permanent_notifications_ref.append(f"{t('jira_login_prompt', service='Trello')}")
+
     try:
         issue_response = session.get(issue_url, timeout=15)
         issue_response.raise_for_status()
         issue_data = issue_response.json()
-
-        
-
         return issue_data
     except requests.exceptions.HTTPError as e:
         logging.error(f"Failed to get: {issue_url}")
-        msg = t('jira_auth_error') if e.response.status_code in [401, 403] else t('jira_http_error', status=e.response.status_code)
-        if msg not in permanent_notifications_ref: permanent_notifications_ref.append(msg)
-        if f"{t('jira_login_prompt', service='Trello')}" not in permanent_notifications_ref: permanent_notifications_ref.append(f"{t('jira_login_prompt', service='Trello')}")
+        # msg = t('jira_auth_error') if e.response.status_code in [401, 403] else t('jira_http_error', status=e.response.status_code)
+        # if msg not in permanent_notifications_ref: permanent_notifications_ref.append(msg)
     except requests.exceptions.RequestException as e:
         msg = t('jira_generic_error', e=str(e))
-        if msg not in permanent_notifications_ref: permanent_notifications_ref.append(msg)
-        if f"{t('jira_login_prompt', service='Trello')}" not in permanent_notifications_ref: permanent_notifications_ref.append(f"{t('jira_login_prompt', service='Trello')}")
+        logging.error(f"Failed to get: {issue_url} with error: {msg}")
+        # if msg not in permanent_notifications_ref: permanent_notifications_ref.append(msg)
     return None
 
 def get_jira_issue_details(issue_id, permanent_notifications_ref):
@@ -215,6 +226,17 @@ def get_jira_issue_details(issue_id, permanent_notifications_ref):
         if f"{t('jira_login_prompt', service='Jira')}" not in permanent_notifications_ref: permanent_notifications_ref.append(f"{t('jira_login_prompt', service='Jira')}")
     return None, None
 
+def get_trello_id(data):
+    jira_description = data.get('fields', {}).get('description', "")
+    trello_id = ""
+    if (jira_description and isinstance(jira_description, str)):
+        # API v2 way, no objects
+        pattern = r"(https://trello\.com/c/[^]]+)"
+        match = re.search(pattern, jira_description)
+        if match:
+            trello_link = match.group(0)
+            trello_id = trello_link.split('/')[-1]
+    return trello_id
 
 def jira_queue_worker(stop_event, permanent_notifications_ref, cache_ref, lock_ref):
     """
@@ -231,10 +253,16 @@ def jira_queue_worker(stop_event, permanent_notifications_ref, cache_ref, lock_r
 
             # If data was fetched successfully, update the SHARED cache
             if issue_data:
+                trello_id = get_trello_id(issue_data)
+                trello_data = {}
+                if trello_id != "":
+                    trello_data = get_trello_card_details(trello_id, permanent_notifications_ref)
+
                 with lock_ref: # Use the passed-in lock
                     # Use the passed-in cache reference
                     cache_ref[issue_id] = {
                         'data': issue_data,
+                        'trello_data': trello_data,
                         'remotelinks': remotelink_data,
                         'timestamp': time.time()
                     }

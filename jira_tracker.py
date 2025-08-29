@@ -818,6 +818,7 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
         task_info_to_show = []
         notes_title_preview = ""
         jira_comments = []
+        trello_data = []
         trello_link = ""
 
         if selected_subtask_idx != -1 and 0 <= selected_subtask_idx < len(subtask_list_to_use):
@@ -859,6 +860,7 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
 
                 
 
+
                 vf_link = next((l.get("object",{}).get("url") for l in cached_item.get('remotelinks',[]) if l.get("globalId") == "VF - Log Hours"), "N/A")
                 task_info_to_show.insert(0, f"VF: {vf_link}")
 
@@ -878,8 +880,7 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
 
                 summary = cached_item.get('data', {}).get('fields', {}).get('summary', {})
                 jira_comments = list(reversed(cached_item.get('data', {}).get('fields', {}).get('comment', {}).get('comments', {})))
-                
-                
+                trello_data = cached_item.get('trello_data', {})
 
                 sub_task_with_desc = f"{sel_sub_name} {summary}"
 
@@ -943,8 +944,71 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
             row += lines_used_note
 
 
+        # 1. Load the JSON string into a Python dictionary
+        #trello_data = json.loads(trello_data_string)
 
-        if len(task_info_to_show):
+        # 2. Create an empty list to hold the formatted comments
+        trello_comments = []
+
+        # 3. Loop through each action in the 'actions' list
+        if trello_data and len(trello_data):
+            for action in trello_data['actions']:
+                # We only want actions that are comments
+                if action['type'] == 'commentCard':
+                    # Parse the date string into a datetime object
+                    # The 'Z' at the end means UTC, which we replace for Python's parser
+                    date_obj = datetime.fromisoformat(action['date'].replace('Z', '+00:00'))
+
+                    # Format the date into a more readable string (e.g., 07.08.2025 12:40)
+                    formatted_date = date_obj.strftime('%d.%m %H:%M')
+
+                    # Create a dictionary for the comment and add it to our list
+                    trello_comments.append({
+                        'comment_text': action['data']['text'],
+                        'creator_name': action['memberCreator']['fullName'],
+                        'date': formatted_date
+                    })
+
+        # 4. Print the final array beautifully ✨
+        #print(json.dumps(trello_comments, indent=4, ensure_ascii=False))
+
+        if len(trello_comments):
+            lines_used_note = _draw_wrapped_text(stdscr, "┌─────TRELLO─ ─── ── ── ─ ─  ─   ─", row, 4,
+                effective_main_width, effective_main_width, content_height_obj,
+                prefix="", subsequent_indent_offset=0,
+                attr=curses.color_pair(COLOR_PAIR_GREY))
+            row += lines_used_note
+
+        for note_idx, note in enumerate(trello_comments[:5]):
+            note_body = note.get("comment_text", "")
+            note_from = note.get("creator_name", "")
+            comment_date = note.get("date", "")
+            note_body = note_body.replace("\n", " ")
+            note_body = note_from + ": " + note_body
+            if content_height_obj[0] <= 0 : break
+            if effective_main_width <= 4: break
+            prefix_note = f"| "
+            start_col_note = 4
+            max_text_width_note = effective_main_width - start_col_note - len(prefix_note)
+
+            note_body = comment_date + ": " + note_body[0:max_text_width_note - 17] + "..."
+
+            if max_text_width_note < 0 : max_text_width_note = 0
+            lines_used_note = _draw_wrapped_text(stdscr, note_body, row, start_col_note,
+                                            max_text_width_note, effective_main_width, content_height_obj,
+                                            prefix=prefix_note, subsequent_indent_offset=len(prefix_note),
+                                            attr=curses.color_pair(COLOR_PAIR_GREY))
+            row += lines_used_note
+
+        if len(trello_comments):
+            lines_used_note = _draw_wrapped_text(stdscr, "└──────────── ─── ── ── ─ ─  ─   ─", row, 4,
+                effective_main_width, effective_main_width, content_height_obj,
+                prefix="", subsequent_indent_offset=0,
+                attr=curses.color_pair(COLOR_PAIR_GREY))
+            row += lines_used_note
+
+
+        if len(jira_comments):
             lines_used_note = _draw_wrapped_text(stdscr, "┌─────JIRA─── ─── ── ── ─ ─  ─   ─", row, 4,
                 effective_main_width, effective_main_width, content_height_obj,
                 prefix="", subsequent_indent_offset=0,
@@ -973,7 +1037,7 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
                                             prefix=prefix_note, subsequent_indent_offset=len(prefix_note),
                                             attr=curses.color_pair(COLOR_PAIR_STANDOUT))
             row += lines_used_note
-        if len(task_info_to_show):
+        if len(jira_comments):
             lines_used_note = _draw_wrapped_text(stdscr, "└──────────── ─── ── ── ─ ─  ─   ─", row, 4,
                 effective_main_width, effective_main_width, content_height_obj,
                 prefix="", subsequent_indent_offset=0,
@@ -1229,6 +1293,9 @@ def handle_input(data, command_parts, stdscr, current_view_mode, selected_subtas
                 del data_dict["task_start_time"]
             paused_modified = True
         return paused_modified
+
+    if command == 'login':
+        return "RESTART_FOR_LOGIN"
 
     if command == 'n':
         if len(command_parts) > 1:
@@ -2062,8 +2129,8 @@ def main(stdscr):
                 ##### JIRA LOGIN CHECK ######
                 if f"{t('jira_login_prompt', service='Trello')}" in permanent_notifications or f"{t('jira_login_prompt', service='Jira')}" in permanent_notifications or t('jira_session_error') in permanent_notifications:
                     logging.error("Restarting app for login")
-                    permanent_notifications = []
-                    return "RESTART_FOR_LOGIN"
+                    # permanent_notifications = []
+                    # return "RESTART_FOR_LOGIN"
 
                 if key == curses.KEY_LEFT:
                     current_view = VIEW_DAILY_NOTES
@@ -2109,6 +2176,9 @@ def main(stdscr):
                             original_ticket = app_data.get("current_ticket")
                             handle_result = handle_input(app_data, cmd_parts, stdscr, current_view, selected_subtask_index, selected_note_index, current_ticket_subtask_list_visible, all_displayable_tickets_for_handle_input)
                         if handle_result is None: break
+                        elif handle_result == "RESTART_FOR_LOGIN":
+                            permanent_notifications = []
+                            return "RESTART_FOR_LOGIN"
                         elif handle_result == "TOGGLE_HELP": show_help_footer = not show_help_footer
                         elif handle_result != "NO_CHANGE":
                             with data_lock:
