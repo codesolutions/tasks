@@ -248,8 +248,6 @@ def jira_queue_worker(stop_event, permanent_notifications_ref, cache_ref, lock_r
             # Fetch new data
             issue_data, remotelink_data = get_jira_issue_details(issue_id, permanent_notifications_ref)
             
-            #logging.debug(get_trello_card_details("TEAYSza2", permanent_notifications_ref))
-
             # If data was fetched successfully, update the SHARED cache
             if issue_data:
                 trello_id = get_trello_id(issue_data)

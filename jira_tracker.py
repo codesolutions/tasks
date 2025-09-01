@@ -2127,7 +2127,7 @@ def main(stdscr):
     calendar_polling_thread.start()
 
     clock_refresh_interval = 1.0; last_clock_refresh_time = 0.0
-    content_refresh_interval = 10.0; last_content_refresh_time = 0.0
+    content_refresh_interval = 120.0; last_content_refresh_time = 0.0
     request_full_redraw = True
     previous_window_size = (0,0)
 
