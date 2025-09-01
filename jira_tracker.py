@@ -15,6 +15,8 @@ import webbrowser
 import pickle
 import logging
 import threading
+import csv
+import io
 
 # internal imports
 import inc.config_manager
@@ -61,7 +63,8 @@ reviews_lock = threading.Lock()
 sent_review_notifications = set()
 permanent_notifications = []
 app_data = {}
-
+external_meetings = []
+external_meetings_lock = threading.Lock()
 
 # -- Setup Locale --
 try:
@@ -91,7 +94,34 @@ WEEKDAY_MAP = {
     'su': 6, 'su': 6
 }
 
-
+def poll_external_calendar():
+    """Polls an external calendar URL for meetings."""
+    global external_meetings
+    calendar_url = inc.config_manager.config.get('CALENDAR_CSV')
+    while True:
+        try:
+            response = requests.get(calendar_url, timeout=20)
+            response.raise_for_status()
+            csv_data = response.text
+            csv_file = io.StringIO(csv_data)
+            reader = csv.reader(csv_file)
+            next(reader)  # Skip header row
+            new_meetings = []
+            for row in reader:
+                if len(row) >= 6:
+                    new_meetings.append({
+                        'start_time': row[1],
+                        'end_time': row[2],
+                        'title': row[3],
+                        'url': row[5]
+                    })
+            with external_meetings_lock:
+                external_meetings.clear()
+                external_meetings.extend(new_meetings)
+        except requests.exceptions.RequestException as e:
+            print(t('polling_err', url=calendar_url, e=e), file=sys.stderr)
+            pass # Silently continue on network errors
+        time.sleep(3600) # Poll every hour
 
 def load_data():
     data = {}
@@ -1102,6 +1132,18 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
     todays_upcoming_events = []
     now_dt_display = datetime.now()
 
+    with external_meetings_lock:
+        current_external_meetings = copy.deepcopy(external_meetings)
+
+    for m in current_external_meetings:
+        try:
+            time_obj = datetime.strptime(m['start_time'], "%H:%M").time()
+            dt = datetime.combine(date.today(), time_obj)
+            if dt.date() == now_dt_display.date() and dt >= now_dt_display:
+                todays_upcoming_events.append({'dt': dt, 'details': m, 'type': 'external_meeting', 'recurring': False})
+        except (ValueError, KeyError):
+            continue
+
     for m in data.get("meetings", []):
         try:
             dt = datetime.fromisoformat(m['datetime'])
@@ -1137,6 +1179,12 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
 
                 text_content = f"{event['dt'].strftime('%H:%M')}: {link_display} ({format_timedelta_minutes(event['dt'] - now_dt)})"
                 if event['recurring']: text_content += f" ({t('recurring')})"
+                lines_used = _draw_wrapped_text(stdscr, text_content, row, 2, effective_main_width-2, effective_main_width, content_height_obj, prefix="- ")
+                row += lines_used; meetings_shown_count +=1
+            elif event.get('type') == 'external_meeting':
+                if content_height_obj[0] <= 0: break
+                m = event['details']
+                text_content = f"{m['start_time']}-{m['end_time']}: ({m['title']}) {m['url']} ({format_timedelta_minutes(event['dt'] - now_dt)})"
                 lines_used = _draw_wrapped_text(stdscr, text_content, row, 2, effective_main_width-2, effective_main_width, content_height_obj, prefix="- ")
                 row += lines_used; meetings_shown_count +=1
 
@@ -1920,6 +1968,24 @@ def event_notification_poller(data_lock, data_ref):
             interruptions = copy.deepcopy(data_ref.get("interruptions", []))
             recurring = copy.deepcopy(data_ref.get("recurring_events", []))
 
+        # Process external calendar events
+        with external_meetings_lock:
+            current_external_meetings = copy.deepcopy(external_meetings)
+
+        for event in current_external_meetings:
+            try:
+                time_obj = datetime.strptime(event['start_time'], "%H:%M").time()
+                dt = datetime.combine(date.today(), time_obj)
+                if dt > now:
+                    all_upcoming_events.append({
+                        'datetime': dt,
+                        'type': 'external_meeting',
+                        'details': event,
+                        'recurring': False
+                    })
+            except (ValueError, KeyError):
+                continue
+
         # Process one-time events
         for event in meetings + interruptions:
             try:
@@ -1954,9 +2020,14 @@ def event_notification_poller(data_lock, data_ref):
                 notification_title = ""
                 notification_body = ""
 
-                if event['type'] == 'meeting':
+                if event['type'] == 'meeting' or event['type'] == 'external_meeting':
                     rec_str = f"({t('recurring')}) " if event['recurring'] else ""
                     notification_title = t('notification_meeting_title', rec=rec_str, min=minutes_until, time=event_time_str)
+                    if event['type'] == 'external_meeting':
+                        details = event.get('details', {})
+                        notification_body = t('notification_meeting_body', link=f"({details.get('title', '')}) {details.get('url', '')}")
+                    else:
+                        notification_body = t('notification_meeting_body', link=event['details'])
                     notification_body = t('notification_meeting_body', link=event['details'])
                 else: # interruption
                     rec_str = f"({t('recurring')}) " if event['recurring'] else ""
@@ -1976,6 +2047,10 @@ def event_notification_poller(data_lock, data_ref):
                     sent_notifications.add((event_id, '5min'))
                     if event['type'] == 'meeting' and event.get('details', '').startswith('http'):
                         open_link_in_browser(event['details'], inc.config_manager.config.get("BROWSER_COMMAND"))
+                    elif event['type'] == 'external_meeting':
+                        url_to_open = event.get('details', {}).get('url', '')
+                        if url_to_open.startswith('http'):
+                            open_link_in_browser(url_to_open, inc.config_manager.config.get("BROWSER_COMMAND"))
 
         time.sleep(60)
 
@@ -2047,6 +2122,9 @@ def main(stdscr):
 
     review_polling_thread = threading.Thread(target=poll_reviews_needed, args=(), daemon=True)
     review_polling_thread.start()
+
+    calendar_polling_thread = threading.Thread(target=poll_external_calendar, args=(), daemon=True)
+    calendar_polling_thread.start()
 
     clock_refresh_interval = 1.0; last_clock_refresh_time = 0.0
     content_refresh_interval = 10.0; last_content_refresh_time = 0.0

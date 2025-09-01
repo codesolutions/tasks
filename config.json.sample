@@ -1,6 +1,8 @@
 {
     "API_TOKEN": "from_gitlab_server",
     "STASH_URL": "http://URL_TO_STASH:7990",
+    "STASH_REVIEW_URL": "http://URL_TO_STASH:7990/rest/api/latest/dashboard/pull-requests?state=OPEN&role=REVIEWER",
+
     "USER_ID": ENTER_YOUR_GITLAB_ID_FROM_JSON,
     "LANGUAGE": "en",
     "NOTIFICATION_WINDOW_TITLE": "TODAYTASKS",
@@ -9,4 +11,10 @@
         "--profile-directory=Profile 1",
         "--new-window"
     ]
+    "JIRA_URL": "https://your_org_here.atlassian.net",
+    "JIRA_SESSION_FILE": "jira_session.pkl",
+    "CHROME_DRIVER_PATH": "chromedriver-linux64/chromedriver",
+    "TRELLO_URL": "https://trello.com",
+    "TRELLO_SESSION_FILE": "trello_session.pkl",
+    "CALENDAR_CSV": "https://docs.google.com/spreadsheets/d/e/YOUR_EXPORTED_CALENDAR_CSV_HERE/pub?gid=0&single=true&output=csv"
 }

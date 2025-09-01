@@ -135,7 +135,6 @@ def save_jira_cache(cache_to_save, lock_to_use):
 
 def get_trello_card_details(card_id, permanent_notifications_ref):
     
-    # https://trello.com/1/cards/TEAYSza2?fields=id&actions=commentCard%2CcopyCommentCard%2CcreateCard%2CcreateInboxCard%2CcopyCard%2CcopyInboxCard&actions_display=true&action_reactions=true&actions_limit=50
     global config
     logging.info(f"Get trello card {card_id}")
     session_file = os.path.join(SCRIPT_DIR, config.get("TRELLO_SESSION_FILE"))
