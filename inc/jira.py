@@ -162,11 +162,13 @@ def get_trello_card_details(card_id, permanent_notifications_ref):
     if test.status_code != 200:
         if f"{t('jira_login_prompt', service='Trello')}" not in permanent_notifications_ref: 
             permanent_notifications_ref.append(f"{t('jira_login_prompt', service='Trello')}")
+        return None
 
     try:
         issue_response = session.get(issue_url, timeout=15)
         issue_response.raise_for_status()
         issue_data = issue_response.json()
+
         return issue_data
     except requests.exceptions.HTTPError as e:
         logging.error(f"Failed to get: {issue_url}")
@@ -212,6 +214,8 @@ def get_jira_issue_details(issue_id, permanent_notifications_ref):
             remotelink_response = session.get(remotelink_url, timeout=15)
             if remotelink_response.ok: remotelink_data = remotelink_response.json()
         except requests.exceptions.RequestException: pass
+
+        if f"{t('jira_login_prompt', service='Jira')}" in permanent_notifications_ref: permanent_notifications_ref.remove(f"{t('jira_login_prompt', service='Jira')}")
 
         return issue_data, remotelink_data
     except requests.exceptions.HTTPError as e:

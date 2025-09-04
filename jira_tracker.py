@@ -2022,13 +2022,16 @@ def event_notification_poller(data_lock, data_ref):
 
                 if event['type'] == 'meeting' or event['type'] == 'external_meeting':
                     rec_str = f"({t('recurring')}) " if event['recurring'] else ""
-                    notification_title = t('notification_meeting_title', rec=rec_str, min=minutes_until, time=event_time_str)
+                    
                     if event['type'] == 'external_meeting':
                         details = event.get('details', {})
-                        notification_body = t('notification_meeting_body', link=f"({details.get('title', '')}) {details.get('url', '')}")
+                        rec_str = f"({details.get('title', '')}) "
+                        notification_body = t('notification_meeting_body', link=f"{details.get('url', '')}")
                     else:
                         notification_body = t('notification_meeting_body', link=event['details'])
-                    notification_body = t('notification_meeting_body', link=event['details'])
+
+                    notification_title = t('notification_meeting_title', rec=rec_str, min=minutes_until, time=event_time_str)
+                    
                 else: # interruption
                     rec_str = f"({t('recurring')}) " if event['recurring'] else ""
                     notification_title = t('notification_event_title', rec=rec_str, min=minutes_until, time=event_time_str)
