@@ -287,7 +287,7 @@ def read_jira_box_content(max_lines=10):
         return []
 
 
-def display_dedicated_notes_view(stdscr, data, command_buffer, entity_for_notes, show_help_footer, selected_note_idx):
+def display_dedicated_notes_view(stdscr, data, command_buffer, entity_for_notes, show_help_footer, selected_note_idx, jira_cache=None, jira_cache_lock=None):
     height, width = stdscr.getmaxyx()
     now_time_str = datetime.now().strftime("%H:%M:%S")
     stdscr.clear()
@@ -300,6 +300,15 @@ def display_dedicated_notes_view(stdscr, data, command_buffer, entity_for_notes,
 
     title = t('dedicated_notes_title')
     notes_list_to_display = []
+    jira_comments = []
+    trello_comments = []
+    task_info_to_show = []
+    
+    # Get cache copy if available
+    cache_copy = {}
+    if jira_cache and jira_cache_lock:
+        with jira_cache_lock:
+            cache_copy = jira_cache.copy()
 
     if entity_for_notes:
         entity_type = entity_for_notes.get("type")
@@ -314,6 +323,72 @@ def display_dedicated_notes_view(stdscr, data, command_buffer, entity_for_notes,
             subtask_details = data.get("sub_tasks",{}).get(main_task_name_context,{}).get(entity_name)
             if subtask_details and isinstance(subtask_details, dict):
                 notes_list_to_display = subtask_details.get("notes", [])
+                
+            # Get Jira and Trello data for subtask
+            jira_ticket_id = inc.helpers.get_jira_ticket_from_url(entity_name)
+            cached_item = cache_copy.get(jira_ticket_id, {})
+            
+            if cached_item:
+                # Get task info
+                status = cached_item.get('data', {}).get('fields', {}).get('status', {}).get('name', 'N/A')
+                status_icon = status
+                if status == "Done":
+                    status_icon = "✅"
+                elif status == "In Progress":
+                    status_icon = "🚧"
+                elif status == "In Review":
+                    status_icon = "👀"
+                elif status == "To Do":
+                    status_icon = "📌"
+                elif status == "Backlog":
+                    status_icon = "🗂️"
+                
+                jira_link = f"{inc.config_manager.config.get('JIRA_URL')}/browse/{jira_ticket_id}"
+                task_info_to_show.append(f"{status_icon} {jira_link}")
+                
+                summary = cached_item.get('data', {}).get('fields', {}).get('summary', '')
+                if summary:
+                    task_info_to_show.append(f"Summary: {summary}")
+                
+                # Check for Trello link in description
+                jira_description = cached_item.get('data', {}).get('fields', {}).get('description', "")
+                if jira_description and isinstance(jira_description, str):
+                    pattern = r"(https://trello\.com/c/[^]]+)"
+                    match = re.search(pattern, jira_description)
+                    if match:
+                        trello_link = match.group(0)
+                        task_info_to_show.append(f"Trello: {trello_link}")
+                
+                # VF link
+                vf_link = next((l.get("object",{}).get("url") for l in cached_item.get('remotelinks',[]) if l.get("globalId") == "VF - Log Hours"), None)
+                if vf_link and vf_link != "N/A":
+                    task_info_to_show.append(f"VF: {vf_link}")
+                
+                # PR info from subtask details
+                if subtask_details and subtask_details.get("pr_url"):
+                    task_info_to_show.append(f"PR: {subtask_details.get('pr_url')}")
+                    
+                    pr_details = subtask_details.get("pr_details", {})
+                    if pr_details:
+                        status_text = pr_details.get('status_text', 'waiting')
+                        approvers_str = "PR " + status_text + ": " + ", ".join(pr_details.get('approvers_formatted', []))
+                        task_info_to_show.append(approvers_str)
+                
+                # Get Jira comments
+                jira_comments = list(reversed(cached_item.get('data', {}).get('fields', {}).get('comment', {}).get('comments', [])))
+                
+                # Get Trello comments
+                trello_data = cached_item.get('trello_data', {})
+                if trello_data and len(trello_data):
+                    for action in trello_data['actions']:
+                        if action['type'] == 'commentCard':
+                            date_obj = datetime.fromisoformat(action['date'].replace('Z', '+00:00'))
+                            formatted_date = date_obj.strftime('%d.%m %H:%M')
+                            trello_comments.append({
+                                'comment_text': action['data']['text'],
+                                'creator_name': action['memberCreator']['fullName'],
+                                'date': formatted_date
+                            })
         else:
             title = t('dedicated_notes_no_selection')
     else:
@@ -338,6 +413,145 @@ def display_dedicated_notes_view(stdscr, data, command_buffer, entity_for_notes,
     if content_height_val < 0: content_height_val = 0
     content_height_obj = [content_height_val]
 
+    # Display task info section if available
+    if task_info_to_show and content_height_obj[0] > 0:
+        lines_used = _draw_wrapped_text(stdscr, "┌─────INFO─── ─── ── ── ─ ─  ─   ─", row, 0,
+            width, width, content_height_obj,
+            prefix="", subsequent_indent_offset=0,
+            attr=curses.color_pair(COLOR_PAIR_PAUSED))
+        row += lines_used
+        
+        for info_item in task_info_to_show:
+            if content_height_obj[0] <= 0: break
+            lines_used = _draw_wrapped_text(stdscr, info_item, row, 0,
+                                            width - 2, width, content_height_obj,
+                                            prefix="| ", subsequent_indent_offset=2,
+                                            attr=curses.color_pair(COLOR_PAIR_PAUSED))
+            row += lines_used
+            
+        if content_height_obj[0] > 0:
+            lines_used = _draw_wrapped_text(stdscr, "└──────────── ─── ── ── ─ ─  ─   ─", row, 0,
+                width, width, content_height_obj,
+                prefix="", subsequent_indent_offset=0,
+                attr=curses.color_pair(COLOR_PAIR_PAUSED))
+            row += lines_used
+
+    # Display Trello comments in full detail
+    if trello_comments and content_height_obj[0] > 0:
+        lines_used = _draw_wrapped_text(stdscr, "┌─────TRELLO COMMENTS─── ─── ── ── ─ ─  ─   ─", row, 0,
+            width, width, content_height_obj,
+            prefix="", subsequent_indent_offset=0,
+            attr=curses.color_pair(COLOR_PAIR_GREY))
+        row += lines_used
+        
+        for comment in trello_comments:
+            if content_height_obj[0] <= 0: break
+            comment_text = comment.get('comment_text', '')
+            creator_name = comment.get('creator_name', '')
+            comment_date = comment.get('date', '')
+            
+            # Show header with author and date
+            header = f"{creator_name} - {comment_date}"
+            lines_used = _draw_wrapped_text(stdscr, header, row, 0,
+                                            width - 2, width, content_height_obj,
+                                            prefix="| ", subsequent_indent_offset=2,
+                                            attr=curses.color_pair(COLOR_PAIR_GREY) | curses.A_BOLD)
+            row += lines_used
+            
+            # Show full comment text (preserve newlines)
+            if comment_text and content_height_obj[0] > 0:
+                for line in comment_text.split('\n'):
+                    if content_height_obj[0] <= 0: break
+                    lines_used = _draw_wrapped_text(stdscr, line, row, 0,
+                                                    width - 2, width, content_height_obj,
+                                                    prefix="| ", subsequent_indent_offset=2,
+                                                    attr=curses.color_pair(COLOR_PAIR_GREY))
+                    row += lines_used
+            
+            # Add separator between comments
+            if content_height_obj[0] > 0:
+                lines_used = _draw_wrapped_text(stdscr, "---", row, 0,
+                                                width - 2, width, content_height_obj,
+                                                prefix="| ", subsequent_indent_offset=2,
+                                                attr=curses.color_pair(COLOR_PAIR_GREY))
+                row += lines_used
+                
+        if content_height_obj[0] > 0:
+            lines_used = _draw_wrapped_text(stdscr, "└──────────── ─── ── ── ─ ─  ─   ─", row, 0,
+                width, width, content_height_obj,
+                prefix="", subsequent_indent_offset=0,
+                attr=curses.color_pair(COLOR_PAIR_GREY))
+            row += lines_used
+
+    # Display Jira comments in full detail
+    if jira_comments and content_height_obj[0] > 0:
+        lines_used = _draw_wrapped_text(stdscr, "┌─────JIRA COMMENTS─── ─── ── ── ─ ─  ─   ─", row, 0,
+            width, width, content_height_obj,
+            prefix="", subsequent_indent_offset=0,
+            attr=curses.color_pair(COLOR_PAIR_STANDOUT))
+        row += lines_used
+        
+        for comment in jira_comments:
+            if content_height_obj[0] <= 0: break
+            comment_body = comment.get('body', '')
+            comment_date = comment.get('updated', '')
+            author = comment.get('author', {}).get('displayName', 'Unknown')
+            
+            # Fix date format
+            if comment_date:
+                try:
+                    if len(comment_date) > 2:
+                        comment_date = comment_date[:-2] + ':' + comment_date[-2:]
+                    dt = datetime.fromisoformat(comment_date)
+                    formatted_date = dt.strftime('%d.%m %H:%M')
+                except:
+                    formatted_date = comment_date
+            else:
+                formatted_date = 'Unknown date'
+            
+            # Show header with author and date
+            header = f"{author} - {formatted_date}"
+            lines_used = _draw_wrapped_text(stdscr, header, row, 0,
+                                            width - 2, width, content_height_obj,
+                                            prefix="| ", subsequent_indent_offset=2,
+                                            attr=curses.color_pair(COLOR_PAIR_STANDOUT) | curses.A_BOLD)
+            row += lines_used
+            
+            # Show full comment text (clean up user mentions, preserve newlines)
+            if comment_body and content_height_obj[0] > 0:
+                # Clean up Jira user mentions
+                clean_body = re.sub(r'\[~.*?\]', 'USER', comment_body)
+                for line in clean_body.split('\n'):
+                    if content_height_obj[0] <= 0: break
+                    lines_used = _draw_wrapped_text(stdscr, line, row, 0,
+                                                    width - 2, width, content_height_obj,
+                                                    prefix="| ", subsequent_indent_offset=2,
+                                                    attr=curses.color_pair(COLOR_PAIR_STANDOUT))
+                    row += lines_used
+            
+            # Add separator between comments
+            if content_height_obj[0] > 0:
+                lines_used = _draw_wrapped_text(stdscr, "---", row, 0,
+                                                width - 2, width, content_height_obj,
+                                                prefix="| ", subsequent_indent_offset=2,
+                                                attr=curses.color_pair(COLOR_PAIR_STANDOUT))
+                row += lines_used
+                
+        if content_height_obj[0] > 0:
+            lines_used = _draw_wrapped_text(stdscr, "└──────────── ─── ── ── ─ ─  ─   ─", row, 0,
+                width, width, content_height_obj,
+                prefix="", subsequent_indent_offset=0,
+                attr=curses.color_pair(COLOR_PAIR_STANDOUT))
+            row += lines_used
+
+    # Display regular notes (with selection/deletion functionality preserved)
+    if notes_list_to_display and content_height_obj[0] > 0:
+        lines_used = _draw_wrapped_text(stdscr, "┌─────NOTES─── ─── ── ── ─ ─  ─   ─", row, 0,
+            width, width, content_height_obj,
+            prefix="", subsequent_indent_offset=0,
+            attr=curses.color_pair(COLOR_PAIR_DEFAULT))
+        row += lines_used
+
     for note_idx, note_text in enumerate(notes_list_to_display):
         if content_height_obj[0] <= 0:
             if row > 0 and note_idx < len(notes_list_to_display) and width > 7:
@@ -361,9 +575,18 @@ def display_dedicated_notes_view(stdscr, data, command_buffer, entity_for_notes,
         row += lines_used
         if lines_used == 0 and content_height_obj[0] <=0 : break
 
-    if not notes_list_to_display and entity_for_notes:
+    # Close the notes section if we had notes
+    if notes_list_to_display and content_height_obj[0] > 0:
+        lines_used = _draw_wrapped_text(stdscr, "└──────────── ─── ── ── ─ ─  ─   ─", row, 0,
+            width, width, content_height_obj,
+            prefix="", subsequent_indent_offset=0,
+            attr=curses.color_pair(COLOR_PAIR_DEFAULT))
+        row += lines_used
+
+    # Show message if no content available
+    if not notes_list_to_display and not jira_comments and not trello_comments and not task_info_to_show and entity_for_notes:
         if content_height_obj[0] > 0:
-            stdscr.addstr(row, 0, t('dedicated_notes_no_notes'))
+            stdscr.addstr(row, 0, "No notes, comments, or details available for this item.")
             row+=1; content_height_obj[0]-=1
 
     help_draw_start_y_notes = height - 1 - 1 - num_help_lines_notes_view
@@ -491,7 +714,7 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
     global pull_requests_for_review, permanent_notifications
 
     if current_view_mode == VIEW_DEDICATED_NOTES:
-        return display_dedicated_notes_view(stdscr, data, command_buffer, entity_for_dedicated_notes, show_help_footer, selected_note_idx)
+        return display_dedicated_notes_view(stdscr, data, command_buffer, entity_for_dedicated_notes, show_help_footer, selected_note_idx, jira_cache, jira_cache_lock)
     if current_view_mode == VIEW_DAILY_NOTES:
         return display_daily_notes_view(stdscr, data, command_buffer, current_date_for_daily_notes_arg, show_help_footer, selected_note_idx)
 
