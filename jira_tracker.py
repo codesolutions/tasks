@@ -1653,16 +1653,140 @@ def handle_input(data, command_parts, stdscr, current_view_mode, selected_subtas
 
 
     elif command == 'a':
-        if current_ticket_name_val and len(command_parts) > 1:
-            sub_task_name_cmd = " ".join(command_parts[1:])
-            current_ticket_subtasks = data.setdefault("sub_tasks", {}).setdefault(current_ticket_name_val, {})
-            if sub_task_name_cmd not in current_ticket_subtasks:
-                current_ticket_subtasks[sub_task_name_cmd] = {"status": "todo", "notes": [], "pr_url": None, "pr_status": None, "jira_refreshed": None}
-                data_was_modified = True
+        if len(command_parts) > 1:
+            sub_task_input = " ".join(command_parts[1:])
+            
+            # Check if input is a Jira ticket ID (e.g., DCURJ-1234)
+            jira_ticket_pattern = re.match(r'^([A-Z]+[A-Z0-9]*-\d+)$', sub_task_input.strip())
+            
+            if jira_ticket_pattern:
+                # Convert Jira ID to full URL
+                jira_base_url = inc.config_manager.config.get('JIRA_URL', 'https://pinja.atlassian.net')
+                sub_task_name_cmd = f"{jira_base_url}/browse/{sub_task_input.strip()}"
+                jira_ticket_id = sub_task_input.strip()
+                
+                # Extract project prefix from ticket ID (e.g., DCURJ from DCURJ-1234)
+                ticket_prefix = jira_ticket_id.split('-')[0]
+                
+                # Find the best matching project based on ticket patterns
+                best_match_project = None
+                best_match_score = 0
+                
+                for project_name, subtasks in data.get("sub_tasks", {}).items():
+                    if project_name in data.get("completed_tickets", []):
+                        continue  # Skip completed projects
+                        
+                    # Count how many subtasks in this project match the ticket prefix
+                    matching_count = 0
+                    total_jira_tickets = 0
+                    
+                    for subtask_url in subtasks.keys():
+                        # Extract ticket ID from URL
+                        url_ticket_match = re.search(r'/browse/([A-Z]+[A-Z0-9]*-\d+)$', subtask_url)
+                        if url_ticket_match:
+                            total_jira_tickets += 1
+                            existing_ticket_id = url_ticket_match.group(1)
+                            existing_prefix = existing_ticket_id.split('-')[0]
+                            if existing_prefix == ticket_prefix:
+                                matching_count += 1
+                    
+                    # Calculate match score (prefer higher match ratio)
+                    if total_jira_tickets > 0:
+                        match_ratio = matching_count / total_jira_tickets
+                        # Also consider absolute count for tie-breaking
+                        score = match_ratio * 1000 + matching_count
+                        
+                        # Debug logging
+                        logging.debug(f"Project {project_name}: {matching_count}/{total_jira_tickets} match {ticket_prefix} (score: {score:.1f})")
+                        
+                        if score > best_match_score:
+                            best_match_score = score
+                            best_match_project = project_name
+                
+                # If no good match found, use current project or show error
+                logging.debug(f"Best match for {ticket_prefix}: {best_match_project} (score: {best_match_score:.1f})")
+                
+                if best_match_project:
+                    target_project = best_match_project
+                    switch_message = ""
+                    if current_ticket_name_val != best_match_project:
+                        # Need to switch projects
+                        pause_current_task(data)
+                        data["current_ticket"] = best_match_project
+                        data["task_start_time"] = time.time()
+                        switch_message = f" (switched to {best_match_project})"
+                elif current_ticket_name_val:
+                    target_project = current_ticket_name_val
+                    switch_message = ""
+                else:
+                    show_notification(stdscr, t('cmd_err_no_matching_project', prefix=ticket_prefix))
+                    return "NO_CHANGE"
+                    
+                # Add subtask to target project
+                target_subtasks = data.setdefault("sub_tasks", {}).setdefault(target_project, {})
+                if sub_task_name_cmd not in target_subtasks:
+                    target_subtasks[sub_task_name_cmd] = {
+                        "status": "todo", 
+                        "notes": [], 
+                        "pr_url": None, 
+                        "pr_status": None, 
+                        "jira_refreshed": None
+                    }
+                    data_was_modified = True
+                    
+                    # Set focus on the newly added subtask
+                    data["focused_ticket"] = target_project
+                    data["focused_subtask"] = sub_task_name_cmd
+                    
+                    # Find the index of the new subtask for selection
+                    show_hidden = data.get("show_hidden_tasks", False)
+                    subtask_list = [(name, details) for name, details in target_subtasks.items() 
+                                  if isinstance(details, dict) and (show_hidden or details.get("status") != "hidden")]
+                    
+                    # Find index of our new subtask
+                    for idx, (name, _) in enumerate(subtask_list):
+                        if name == sub_task_name_cmd:
+                            # This would need to be returned to update selection in main loop
+                            break
+                    
+                    if switch_message:
+                        show_notification(stdscr, t('cmd_info_subtask_added_with_switch', 
+                                                   ticket=jira_ticket_id, 
+                                                   project=target_project, 
+                                                   old_project=current_ticket_name_val or "None"))
+                    else:
+                        show_notification(stdscr, t('cmd_info_subtask_added', 
+                                                   ticket=jira_ticket_id, 
+                                                   project=target_project))
+                else:
+                    show_notification(stdscr, t('cmd_err_ticket_already_exists', 
+                                               ticket=jira_ticket_id, 
+                                               project=target_project))
             else:
-                show_notification(stdscr, t('cmd_err_subtask_exists', name=sub_task_name_cmd))
-        elif not current_ticket_name_val: show_notification(stdscr, t('cmd_err_no_active_task_for_subtask'))
-        else: show_notification(stdscr, t('cmd_usage_add_subtask'))
+                # Handle regular URL or text input (original behavior)
+                sub_task_name_cmd = sub_task_input
+                
+                if not current_ticket_name_val:
+                    show_notification(stdscr, t('cmd_err_no_active_task_for_subtask'))
+                    return "NO_CHANGE"
+                    
+                current_ticket_subtasks = data.setdefault("sub_tasks", {}).setdefault(current_ticket_name_val, {})
+                if sub_task_name_cmd not in current_ticket_subtasks:
+                    current_ticket_subtasks[sub_task_name_cmd] = {
+                        "status": "todo", 
+                        "notes": [], 
+                        "pr_url": None, 
+                        "pr_status": None, 
+                        "jira_refreshed": None
+                    }
+                    data_was_modified = True
+                    show_notification(stdscr, t('cmd_info_subtask_added', 
+                                               ticket=sub_task_name_cmd, 
+                                               project=current_ticket_name_val))
+                else:
+                    show_notification(stdscr, t('cmd_err_subtask_exists', name=sub_task_name_cmd))
+        else:
+            show_notification(stdscr, t('cmd_usage_add_subtask'))
 
     elif command == 'pr':
         if current_ticket_name_val and selected_subtask_idx != -1 and \
