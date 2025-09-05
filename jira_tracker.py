@@ -287,7 +287,7 @@ def read_jira_box_content(max_lines=10):
         return []
 
 
-def display_dedicated_notes_view(stdscr, data, command_buffer, entity_for_notes, show_help_footer, selected_note_idx, jira_cache=None, jira_cache_lock=None):
+def display_dedicated_notes_view(stdscr, data, command_buffer, entity_for_notes, show_help_footer, selected_note_idx, jira_cache=None, jira_cache_lock=None, scroll_offset=0):
     height, width = stdscr.getmaxyx()
     now_time_str = datetime.now().strftime("%H:%M:%S")
     stdscr.clear()
@@ -404,6 +404,8 @@ def display_dedicated_notes_view(stdscr, data, command_buffer, entity_for_notes,
         t('dedicated_notes_help_select'),
         t('dedicated_notes_help_delete'),
         t('dedicated_notes_help_add'),
+        t('dedicated_notes_help_scroll_up'),
+        t('dedicated_notes_help_scroll_down'),
         t('dedicated_notes_help_back')
     ]
     num_help_lines_notes_view = len(help_lines_notes_view)
@@ -412,87 +414,120 @@ def display_dedicated_notes_view(stdscr, data, command_buffer, entity_for_notes,
     content_height_val = height - (row + reserved_rows_notes_footer)
     if content_height_val < 0: content_height_val = 0
     content_height_obj = [content_height_val]
-
-    # Display task info section if available
-    if task_info_to_show and content_height_obj[0] > 0:
-        lines_used = _draw_wrapped_text(stdscr, "┌─────INFO─── ─── ── ── ─ ─  ─   ─", row, 0,
-            width, width, content_height_obj,
-            prefix="", subsequent_indent_offset=0,
-            attr=curses.color_pair(COLOR_PAIR_PAUSED))
-        row += lines_used
-        
-        for info_item in task_info_to_show:
-            if content_height_obj[0] <= 0: break
-            lines_used = _draw_wrapped_text(stdscr, info_item, row, 0,
-                                            width - 2, width, content_height_obj,
-                                            prefix="| ", subsequent_indent_offset=2,
-                                            attr=curses.color_pair(COLOR_PAIR_PAUSED))
-            row += lines_used
+    
+    # Create a virtual content area to render all content, then apply scrolling
+    virtual_content = []
+    virtual_row = 0
+    
+    # Helper function to add content to virtual screen with intelligent text wrapping
+    def add_virtual_content(text, attr=curses.color_pair(COLOR_PAIR_DEFAULT), prefix="", indent_continuation=0):
+        if not text:
+            virtual_content.append({'text': "", 'attr': attr})
+            return
             
-        if content_height_obj[0] > 0:
-            lines_used = _draw_wrapped_text(stdscr, "└──────────── ─── ── ── ─ ─  ─   ─", row, 0,
-                width, width, content_height_obj,
-                prefix="", subsequent_indent_offset=0,
-                attr=curses.color_pair(COLOR_PAIR_PAUSED))
-            row += lines_used
+        # Calculate available width for text
+        available_width = width - 1  # Leave space for cursor
+        
+        def smart_wrap(text_to_wrap, line_width):
+            """Intelligently wrap text, preferring to break at word boundaries"""
+            if len(text_to_wrap) <= line_width:
+                return [text_to_wrap]
+            
+            wrapped_lines = []
+            remaining = text_to_wrap
+            
+            while remaining:
+                if len(remaining) <= line_width:
+                    wrapped_lines.append(remaining)
+                    break
+                    
+                # Try to find a good break point (space, punctuation)
+                break_point = line_width
+                for i in range(line_width, max(0, line_width - 20), -1):
+                    if i < len(remaining) and remaining[i] in ' \t\n.,;:!?':
+                        break_point = i + 1 if remaining[i] in ' \t\n' else i + 1
+                        break
+                
+                # If we couldn't find a good break point, just break at the width
+                if break_point == line_width and line_width < len(remaining):
+                    # Look ahead to see if we're in the middle of a word
+                    if line_width < len(remaining) and remaining[line_width] not in ' \t\n':
+                        # Try to find the end of the current word
+                        word_end = line_width
+                        while word_end > line_width - 10 and word_end > 0 and remaining[word_end - 1] not in ' \t\n':
+                            word_end -= 1
+                        if word_end > line_width - 10:  # Found a reasonable word boundary
+                            break_point = word_end
+                
+                wrapped_lines.append(remaining[:break_point].rstrip())
+                remaining = remaining[break_point:].lstrip()
+            
+            return wrapped_lines
+        
+        # Handle prefixed lines (like "| comment text")
+        if prefix:
+            # First line with prefix
+            first_line_available = available_width - len(prefix)
+            if first_line_available <= 0:
+                virtual_content.append({'text': prefix, 'attr': attr})
+                return
+                
+            wrapped_lines = smart_wrap(text, first_line_available)
+            
+            # First line with prefix
+            if wrapped_lines:
+                virtual_content.append({'text': prefix + wrapped_lines[0], 'attr': attr})
+                
+                # Continuation lines with indentation
+                if len(wrapped_lines) > 1:
+                    continuation_prefix = " " * (len(prefix) + indent_continuation)
+                    continuation_width = available_width - len(continuation_prefix)
+                    
+                    for line in wrapped_lines[1:]:
+                        # Further wrap continuation lines if needed
+                        cont_wrapped = smart_wrap(line, continuation_width)
+                        for cont_line in cont_wrapped:
+                            virtual_content.append({'text': continuation_prefix + cont_line, 'attr': attr})
+        else:
+            # Simple text without prefix - wrap at available width
+            wrapped_lines = smart_wrap(text, available_width)
+            for line in wrapped_lines:
+                virtual_content.append({'text': line, 'attr': attr})
+    
+    # Display task info section if available
+    if task_info_to_show:
+        add_virtual_content("┌─────INFO─── ─── ── ── ─ ─  ─   ─", curses.color_pair(COLOR_PAIR_PAUSED))
+        for info_item in task_info_to_show:
+            add_virtual_content(info_item, curses.color_pair(COLOR_PAIR_PAUSED), prefix="| ")
+        add_virtual_content("└──────────── ─── ── ── ─ ─  ─   ─", curses.color_pair(COLOR_PAIR_PAUSED))
+        add_virtual_content("")  # Empty line for spacing
 
     # Display Trello comments in full detail
-    if trello_comments and content_height_obj[0] > 0:
-        lines_used = _draw_wrapped_text(stdscr, "┌─────TRELLO COMMENTS─── ─── ── ── ─ ─  ─   ─", row, 0,
-            width, width, content_height_obj,
-            prefix="", subsequent_indent_offset=0,
-            attr=curses.color_pair(COLOR_PAIR_GREY))
-        row += lines_used
-        
+    if trello_comments:
+        add_virtual_content("┌─────TRELLO COMMENTS─── ─── ── ── ─ ─  ─   ─", curses.color_pair(COLOR_PAIR_GREY))
         for comment in trello_comments:
-            if content_height_obj[0] <= 0: break
             comment_text = comment.get('comment_text', '')
             creator_name = comment.get('creator_name', '')
             comment_date = comment.get('date', '')
             
             # Show header with author and date
             header = f"{creator_name} - {comment_date}"
-            lines_used = _draw_wrapped_text(stdscr, header, row, 0,
-                                            width - 2, width, content_height_obj,
-                                            prefix="| ", subsequent_indent_offset=2,
-                                            attr=curses.color_pair(COLOR_PAIR_GREY) | curses.A_BOLD)
-            row += lines_used
+            add_virtual_content(header, curses.color_pair(COLOR_PAIR_GREY) | curses.A_BOLD, prefix="| ")
             
-            # Show full comment text (preserve newlines)
-            if comment_text and content_height_obj[0] > 0:
+            # Show full comment text (preserve newlines and wrap long lines)
+            if comment_text:
                 for line in comment_text.split('\n'):
-                    if content_height_obj[0] <= 0: break
-                    lines_used = _draw_wrapped_text(stdscr, line, row, 0,
-                                                    width - 2, width, content_height_obj,
-                                                    prefix="| ", subsequent_indent_offset=2,
-                                                    attr=curses.color_pair(COLOR_PAIR_GREY))
-                    row += lines_used
+                    add_virtual_content(line, curses.color_pair(COLOR_PAIR_GREY), prefix="| ")
             
             # Add separator between comments
-            if content_height_obj[0] > 0:
-                lines_used = _draw_wrapped_text(stdscr, "---", row, 0,
-                                                width - 2, width, content_height_obj,
-                                                prefix="| ", subsequent_indent_offset=2,
-                                                attr=curses.color_pair(COLOR_PAIR_GREY))
-                row += lines_used
-                
-        if content_height_obj[0] > 0:
-            lines_used = _draw_wrapped_text(stdscr, "└──────────── ─── ── ── ─ ─  ─   ─", row, 0,
-                width, width, content_height_obj,
-                prefix="", subsequent_indent_offset=0,
-                attr=curses.color_pair(COLOR_PAIR_GREY))
-            row += lines_used
+            add_virtual_content("---", curses.color_pair(COLOR_PAIR_GREY), prefix="| ")
+        add_virtual_content("└──────────── ─── ── ── ─ ─  ─   ─", curses.color_pair(COLOR_PAIR_GREY))
+        add_virtual_content("")  # Empty line for spacing
 
     # Display Jira comments in full detail
-    if jira_comments and content_height_obj[0] > 0:
-        lines_used = _draw_wrapped_text(stdscr, "┌─────JIRA COMMENTS─── ─── ── ── ─ ─  ─   ─", row, 0,
-            width, width, content_height_obj,
-            prefix="", subsequent_indent_offset=0,
-            attr=curses.color_pair(COLOR_PAIR_STANDOUT))
-        row += lines_used
-        
+    if jira_comments:
+        add_virtual_content("┌─────JIRA COMMENTS─── ─── ── ── ─ ─  ─   ─", curses.color_pair(COLOR_PAIR_STANDOUT))
         for comment in jira_comments:
-            if content_height_obj[0] <= 0: break
             comment_body = comment.get('body', '')
             comment_date = comment.get('updated', '')
             author = comment.get('author', {}).get('displayName', 'Unknown')
@@ -511,83 +546,57 @@ def display_dedicated_notes_view(stdscr, data, command_buffer, entity_for_notes,
             
             # Show header with author and date
             header = f"{author} - {formatted_date}"
-            lines_used = _draw_wrapped_text(stdscr, header, row, 0,
-                                            width - 2, width, content_height_obj,
-                                            prefix="| ", subsequent_indent_offset=2,
-                                            attr=curses.color_pair(COLOR_PAIR_STANDOUT) | curses.A_BOLD)
-            row += lines_used
+            add_virtual_content(header, curses.color_pair(COLOR_PAIR_STANDOUT) | curses.A_BOLD, prefix="| ")
             
-            # Show full comment text (clean up user mentions, preserve newlines)
-            if comment_body and content_height_obj[0] > 0:
+            # Show full comment text (clean up user mentions, preserve newlines and wrap long lines)
+            if comment_body:
                 # Clean up Jira user mentions
                 clean_body = re.sub(r'\[~.*?\]', 'USER', comment_body)
                 for line in clean_body.split('\n'):
-                    if content_height_obj[0] <= 0: break
-                    lines_used = _draw_wrapped_text(stdscr, line, row, 0,
-                                                    width - 2, width, content_height_obj,
-                                                    prefix="| ", subsequent_indent_offset=2,
-                                                    attr=curses.color_pair(COLOR_PAIR_STANDOUT))
-                    row += lines_used
+                    add_virtual_content(line, curses.color_pair(COLOR_PAIR_STANDOUT), prefix="| ")
             
             # Add separator between comments
-            if content_height_obj[0] > 0:
-                lines_used = _draw_wrapped_text(stdscr, "---", row, 0,
-                                                width - 2, width, content_height_obj,
-                                                prefix="| ", subsequent_indent_offset=2,
-                                                attr=curses.color_pair(COLOR_PAIR_STANDOUT))
-                row += lines_used
-                
-        if content_height_obj[0] > 0:
-            lines_used = _draw_wrapped_text(stdscr, "└──────────── ─── ── ── ─ ─  ─   ─", row, 0,
-                width, width, content_height_obj,
-                prefix="", subsequent_indent_offset=0,
-                attr=curses.color_pair(COLOR_PAIR_STANDOUT))
-            row += lines_used
+            add_virtual_content("---", curses.color_pair(COLOR_PAIR_STANDOUT), prefix="| ")
+        add_virtual_content("└──────────── ─── ── ── ─ ─  ─   ─", curses.color_pair(COLOR_PAIR_STANDOUT))
+        add_virtual_content("")  # Empty line for spacing
 
     # Display regular notes (with selection/deletion functionality preserved)
-    if notes_list_to_display and content_height_obj[0] > 0:
-        lines_used = _draw_wrapped_text(stdscr, "┌─────NOTES─── ─── ── ── ─ ─  ─   ─", row, 0,
-            width, width, content_height_obj,
-            prefix="", subsequent_indent_offset=0,
-            attr=curses.color_pair(COLOR_PAIR_DEFAULT))
-        row += lines_used
-
-    for note_idx, note_text in enumerate(notes_list_to_display):
-        if content_height_obj[0] <= 0:
-            if row > 0 and note_idx < len(notes_list_to_display) and width > 7:
-                try: stdscr.addstr(row, 2, "..."[:width-2])
-                except curses.error: pass
-            break
-
-        item_attr = curses.color_pair(COLOR_PAIR_DEFAULT)
-        prefix = f"  {note_idx+1}. "
-        if note_idx == selected_note_idx:
-            item_attr = curses.color_pair(COLOR_PAIR_SELECTED)
-            prefix = f"> {note_idx+1}. "
-
-
-        start_col = 0
-        max_text_width_for_line = width - start_col - len(prefix) -1
-        if max_text_width_for_line < 0: max_text_width_for_line = 0
-        lines_used = _draw_wrapped_text(stdscr, note_text, row, start_col,
-                                        max_text_width_for_line, width, content_height_obj,
-                                        prefix=prefix, subsequent_indent_offset=len(prefix), attr=item_attr)
-        row += lines_used
-        if lines_used == 0 and content_height_obj[0] <=0 : break
-
-    # Close the notes section if we had notes
-    if notes_list_to_display and content_height_obj[0] > 0:
-        lines_used = _draw_wrapped_text(stdscr, "└──────────── ─── ── ── ─ ─  ─   ─", row, 0,
-            width, width, content_height_obj,
-            prefix="", subsequent_indent_offset=0,
-            attr=curses.color_pair(COLOR_PAIR_DEFAULT))
-        row += lines_used
-
+    if notes_list_to_display:
+        add_virtual_content("┌─────NOTES─── ─── ── ── ─ ─  ─   ─", curses.color_pair(COLOR_PAIR_DEFAULT))
+        for note_idx, note_text in enumerate(notes_list_to_display):
+            item_attr = curses.color_pair(COLOR_PAIR_DEFAULT)
+            prefix = f"  {note_idx+1}. "
+            if note_idx == selected_note_idx:
+                item_attr = curses.color_pair(COLOR_PAIR_SELECTED)
+                prefix = f"> {note_idx+1}. "
+            add_virtual_content(note_text, item_attr, prefix=prefix)
+        add_virtual_content("└──────────── ─── ── ── ─ ─  ─   ─", curses.color_pair(COLOR_PAIR_DEFAULT))
+    
     # Show message if no content available
     if not notes_list_to_display and not jira_comments and not trello_comments and not task_info_to_show and entity_for_notes:
-        if content_height_obj[0] > 0:
-            stdscr.addstr(row, 0, "No notes, comments, or details available for this item.")
-            row+=1; content_height_obj[0]-=1
+        add_virtual_content("No notes, comments, or details available for this item.")
+    
+    # Now render the visible portion of virtual content based on scroll offset
+    visible_start = max(0, scroll_offset)
+    visible_end = visible_start + content_height_val
+    visible_content = virtual_content[visible_start:visible_end]
+    
+    for i, content_item in enumerate(visible_content):
+        if row + i >= height - reserved_rows_notes_footer: break
+        try:
+            # Text wrapping is now handled in add_virtual_content, so just display as-is
+            stdscr.addstr(row + i, 0, content_item['text'], content_item['attr'])
+        except curses.error:
+            pass
+    
+    # Show scroll indicators if there's more content
+    total_content_lines = len(virtual_content)
+    if total_content_lines > content_height_val:
+        scroll_info = f"[{visible_start+1}-{min(visible_end, total_content_lines)}/{total_content_lines}]"
+        try:
+            stdscr.addstr(height - reserved_rows_notes_footer - 1, width - len(scroll_info) - 1, scroll_info, curses.color_pair(COLOR_PAIR_PAUSED))
+        except curses.error:
+            pass
 
     help_draw_start_y_notes = height - 1 - 1 - num_help_lines_notes_view
     if help_draw_start_y_notes >= row:
@@ -709,12 +718,12 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
                current_view_mode=VIEW_MAIN, entity_for_dedicated_notes=None,
                current_ticket_subtask_list_for_display_arg=None, show_help_footer=True,
                current_date_for_daily_notes_arg=None, selected_note_idx=-1,
-               jira_cache=None, jira_cache_lock=None):
+               jira_cache=None, jira_cache_lock=None, notes_scroll_offset=0):
 
     global pull_requests_for_review, permanent_notifications
 
     if current_view_mode == VIEW_DEDICATED_NOTES:
-        return display_dedicated_notes_view(stdscr, data, command_buffer, entity_for_dedicated_notes, show_help_footer, selected_note_idx, jira_cache, jira_cache_lock)
+        return display_dedicated_notes_view(stdscr, data, command_buffer, entity_for_dedicated_notes, show_help_footer, selected_note_idx, jira_cache, jira_cache_lock, notes_scroll_offset)
     if current_view_mode == VIEW_DAILY_NOTES:
         return display_daily_notes_view(stdscr, data, command_buffer, current_date_for_daily_notes_arg, show_help_footer, selected_note_idx)
 
@@ -2334,6 +2343,12 @@ def main(stdscr):
     except curses.error: pass
     stdscr.nodelay(True)
     stdscr.keypad(True)
+    
+    # Enable mouse support for scrolling
+    try:
+        curses.mousemask(curses.ALL_MOUSE_EVENTS | curses.REPORT_MOUSE_POSITION)
+    except:
+        pass  # Mouse support is optional
 
     app_data = load_data()
     load_jira_cache()
@@ -2346,6 +2361,9 @@ def main(stdscr):
     entity_for_dedicated_notes = None
     show_help_footer = False
     current_date_for_daily_notes = date.today()
+    
+    # Scroll offset for notes views (tracks how much content has been scrolled up)
+    notes_scroll_offset = 0
 
     pr_polling_thread = threading.Thread(target=poll_pull_requests, args=(data_lock, app_data), daemon=True)
     pr_polling_thread.start()
@@ -2441,7 +2459,7 @@ def main(stdscr):
                         entity_for_dedicated_notes = {"type": "task", "name": active_main_ticket}
                         current_view = VIEW_DEDICATED_NOTES
                     if current_view == VIEW_DEDICATED_NOTES:
-                        command_buffer = ""; request_full_redraw = True; selected_note_index = -1
+                        command_buffer = ""; request_full_redraw = True; selected_note_index = -1; notes_scroll_offset = 0
                 elif current_view in [VIEW_DEDICATED_NOTES, VIEW_DAILY_NOTES]:
                     current_view = VIEW_MAIN
                     entity_for_dedicated_notes = None; selected_note_index = -1
@@ -2598,6 +2616,23 @@ def main(stdscr):
                     if notes_list_size > 0 and selected_note_index < notes_list_size - 1:
                         selected_note_index += 1
                     request_full_redraw = True
+                elif key == curses.KEY_NPAGE:  # Page Down
+                    notes_scroll_offset += 10  # Scroll down 10 lines
+                    request_full_redraw = True
+                elif key == curses.KEY_PPAGE:  # Page Up
+                    notes_scroll_offset = max(0, notes_scroll_offset - 10)  # Scroll up 10 lines
+                    request_full_redraw = True
+                elif key == curses.KEY_MOUSE:  # Mouse events
+                    try:
+                        _, mx, my, _, bstate = curses.getmouse()
+                        if bstate & curses.BUTTON4_PRESSED:  # Mouse wheel up
+                            notes_scroll_offset = max(0, notes_scroll_offset - 3)
+                            request_full_redraw = True
+                        elif bstate & curses.BUTTON5_PRESSED:  # Mouse wheel down
+                            notes_scroll_offset += 3
+                            request_full_redraw = True
+                    except curses.error:
+                        pass  # Ignore mouse errors
                 elif key == '\n' or key == curses.KEY_ENTER:
                     cmd_parts = command_buffer.split()
                     if cmd_parts and cmd_parts[0].lower() == 'd' and selected_note_index != -1:
@@ -2657,7 +2692,7 @@ def main(stdscr):
             # Redraw the UI after every valid keypress.
             request_full_redraw = True
             last_content_refresh_time = 0
-            display_ui(stdscr, app_data, command_buffer, request_full_redraw, selected_subtask_index, current_view, entity_for_dedicated_notes, current_ticket_subtask_list_visible, show_help_footer, current_date_for_daily_notes, selected_note_index, jira_cache, jira_cache_lock)
+            display_ui(stdscr, app_data, command_buffer, request_full_redraw, selected_subtask_index, current_view, entity_for_dedicated_notes, current_ticket_subtask_list_visible, show_help_footer, current_date_for_daily_notes, selected_note_index, jira_cache, jira_cache_lock, notes_scroll_offset)
             if request_full_redraw : request_full_redraw = False
 
         if not user_activity_caused_draw_this_cycle:
@@ -2665,7 +2700,7 @@ def main(stdscr):
                 request_full_redraw = True
 
             if request_full_redraw or (current_time - last_clock_refresh_time >= clock_refresh_interval):
-                display_ui(stdscr, app_data, command_buffer, request_full_redraw, selected_subtask_index, current_view, entity_for_dedicated_notes, current_ticket_subtask_list_visible, show_help_footer, current_date_for_daily_notes, selected_note_index, jira_cache, jira_cache_lock)
+                display_ui(stdscr, app_data, command_buffer, request_full_redraw, selected_subtask_index, current_view, entity_for_dedicated_notes, current_ticket_subtask_list_visible, show_help_footer, current_date_for_daily_notes, selected_note_index, jira_cache, jira_cache_lock, notes_scroll_offset)
                 last_clock_refresh_time = current_time
                 if request_full_redraw:
                     last_content_refresh_time = current_time

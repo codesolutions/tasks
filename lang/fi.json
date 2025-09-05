@@ -60,6 +60,8 @@
     "dedicated_notes_help_select": "  Ylös/Alas - Valitse/Poista valinta",
     "dedicated_notes_help_delete": "  d Enter   - Poista valittu rivi",
     "dedicated_notes_help_add": "  Enter     - Lisää uusi rivi syötteestä",
+    "dedicated_notes_help_scroll_up": "  PgUp/Hiiren rullan ylös - Vieritä ylös",
+    "dedicated_notes_help_scroll_down": "  PgDn/Hiiren rullan alas - Vieritä alas",
     "dedicated_notes_help_back": "  Shift+TAB/ESC - Palaa",
     "daily_notes_header": "Päivän {date} ({weekday}) muistiinpanot:",
     "daily_notes_no_notes": "Ei muistiinpanoja tälle päivälle.",
