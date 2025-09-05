@@ -251,7 +251,7 @@ def jira_queue_worker(stop_event, permanent_notifications_ref, cache_ref, lock_r
 
             # Fetch new data
             issue_data, remotelink_data = get_jira_issue_details(issue_id, permanent_notifications_ref)
-            
+
             # If data was fetched successfully, update the SHARED cache
             if issue_data:
                 trello_id = get_trello_id(issue_data)
@@ -260,12 +260,44 @@ def jira_queue_worker(stop_event, permanent_notifications_ref, cache_ref, lock_r
                     trello_data = get_trello_card_details(trello_id, permanent_notifications_ref)
 
                 with lock_ref: # Use the passed-in lock
+                    is_initial_fetch = issue_id not in cache_ref
+
+                    new_jira_comment_flag = False
+                    new_trello_comment_flag = False
+
+                    # Check for new Jira comments
+                    new_jira_comments = issue_data.get('fields', {}).get('comment', {}).get('comments', [])
+                    if not is_initial_fetch:
+                        old_jira_comment_count = cache_ref[issue_id].get('jira_comment_count', 0)
+                        if len(new_jira_comments) > old_jira_comment_count:
+                            new_jira_comment_flag = True
+                            notification_msg = f"New Jira comment in {issue_id}"
+                            if notification_msg not in permanent_notifications_ref:
+                                permanent_notifications_ref.append(notification_msg)
+
+                    # Check for new Trello comments
+                    trello_comment_count = 0
+                    if trello_data and 'actions' in trello_data:
+                        new_trello_comments = [a for a in trello_data['actions'] if a['type'] == 'commentCard']
+                        trello_comment_count = len(new_trello_comments)
+                        if not is_initial_fetch:
+                            old_trello_comment_count = cache_ref[issue_id].get('trello_comment_count', 0)
+                            if trello_comment_count > old_trello_comment_count:
+                                new_trello_comment_flag = True
+                                notification_msg = f"New Trello comment in {issue_id}"
+                                if notification_msg not in permanent_notifications_ref:
+                                    permanent_notifications_ref.append(notification_msg)
+
                     # Use the passed-in cache reference
                     cache_ref[issue_id] = {
                         'data': issue_data,
                         'trello_data': trello_data,
                         'remotelinks': remotelink_data,
-                        'timestamp': time.time()
+                        'timestamp': time.time(),
+                        'jira_comment_count': len(new_jira_comments),
+                        'trello_comment_count': trello_comment_count,
+                        'new_jira_comment': new_jira_comment_flag,
+                        'new_trello_comment': new_trello_comment_flag
                     }
                 # Save the updated shared cache to the file
                 save_jira_cache(cache_ref, lock_ref)

@@ -81,7 +81,8 @@ JIRA_BOX_FILE = os.path.join(SCRIPT_DIR, "jira_box2.txt")
 (COLOR_PAIR_DEFAULT, COLOR_PAIR_REVERSE, COLOR_PAIR_GREY, COLOR_PAIR_PAUSED,
  COLOR_PAIR_SELECTED, COLOR_PAIR_TASK_ALL_SUBTASKS_DONE, COLOR_PAIR_TASK_ALL_SUBTASKS_HIDDEN, COLOR_PAIR_URGENT_BOX,
  COLOR_PAIR_PR_UNHANDLED, COLOR_PAIR_PR_APPROVED, COLOR_PAIR_FOCUSED,
- COLOR_PAIR_PERMANENT_NOTIFICATION, COLOR_PAIR_STANDOUT) = range(1, 14)
+ COLOR_PAIR_PERMANENT_NOTIFICATION, COLOR_PAIR_STANDOUT, COLOR_PAIR_NEW_COMMENT) = range(1, 15)
+
 
 # -- Views --
 VIEW_MAIN = "main"
@@ -668,6 +669,8 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
                 item_attr = curses.color_pair(COLOR_PAIR_FOCUSED)
             else:
                 subtasks_for_this_panel_ticket = data.get("sub_tasks", {}).get(ticket_name_in_panel, {})
+                cached_item = cache_copy.get(inc.helpers.get_jira_ticket_from_url(ticket_name_in_panel))
+
                 # Check for PR status for background color
                 if any(st.get("pr_status") == 'attention_needed' for st in subtasks_for_this_panel_ticket.values() if isinstance(st, dict)):
                     item_attr = curses.color_pair(COLOR_PAIR_PR_UNHANDLED)
@@ -675,6 +678,8 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
                 elif any(st.get("pr_status") == 'approved' for st in subtasks_for_this_panel_ticket.values() if isinstance(st, dict)):
                     item_attr = curses.color_pair(COLOR_PAIR_PR_APPROVED)
                     if f"{ticket_name_in_panel}: PR approved. Please merge!" not in permanent_notifications: permanent_notifications.append(f"{ticket_name_in_panel}: PR approved. Please merge!")
+                elif cached_item and (cached_item.get('new_jira_comment') or cached_item.get('new_trello_comment')):
+                    item_attr = curses.color_pair(COLOR_PAIR_NEW_COMMENT)
                 elif subtasks_for_this_panel_ticket and all(st_details.get("status") == "hidden" for st_details in subtasks_for_this_panel_ticket.values() if isinstance(st_details, dict)):
                     item_attr = curses.color_pair(COLOR_PAIR_TASK_ALL_SUBTASKS_HIDDEN)
                 elif (subtasks_for_this_panel_ticket and 
@@ -787,6 +792,7 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
                 if effective_main_width <= 4: break
 
                 jira_ticket_id = inc.helpers.get_jira_ticket_from_url(sub_task_name)
+                cached_item = cache_copy.get(jira_ticket_id)
                 status = sub_task_details_obj.get("status", "todo")
                 status_char = ""
                 if status == "focused":
@@ -821,6 +827,9 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
 
                 elif pr_status == 'approved':
                     item_attr = curses.color_pair(COLOR_PAIR_PR_APPROVED)
+
+                elif cached_item and (cached_item.get('new_jira_comment') or cached_item.get('new_trello_comment')):
+                    item_attr = curses.color_pair(COLOR_PAIR_NEW_COMMENT)
 
                 if i == selected_subtask_idx:
                     item_attr = curses.color_pair(COLOR_PAIR_SELECTED)
@@ -2094,6 +2103,7 @@ def main(stdscr):
         curses.init_pair(COLOR_PAIR_FOCUSED, curses.COLOR_BLACK, curses.COLOR_YELLOW)
         curses.init_pair(COLOR_PAIR_PERMANENT_NOTIFICATION, curses.COLOR_BLACK, curses.COLOR_RED)
         curses.init_pair(COLOR_PAIR_STANDOUT, curses.COLOR_CYAN, curses.COLOR_BLACK)
+        curses.init_pair(COLOR_PAIR_NEW_COMMENT, curses.COLOR_WHITE, curses.COLOR_MAGENTA)
 
     except: pass
 
@@ -2136,6 +2146,8 @@ def main(stdscr):
 
     ticket_name_at_loop_start = app_data.get("current_ticket")
 
+    old_selected_subtask_index = -1
+
     while True:
         current_time = time.time()
         try: new_height, new_width = stdscr.getmaxyx()
@@ -2168,6 +2180,17 @@ def main(stdscr):
 
             all_displayable_tickets_for_handle_input = sorted([t for t in list(filter(None, all_tickets_set_for_cmd)) if t not in completed_tickets])
 
+        notifications_to_remove = []
+        for msg in permanent_notifications:
+            if "New Jira comment" in msg or "New Trello comment" in msg:
+                if msg not in sent_notifications:
+                    send_desktop_notification("New Comment", msg)
+                    sent_notifications.add(msg)
+                notifications_to_remove.append(msg)
+        
+        if notifications_to_remove:
+            permanent_notifications = [n for n in permanent_notifications if n not in notifications_to_remove]
+
 
         key = -1
         try: key = stdscr.get_wch()
@@ -2175,6 +2198,8 @@ def main(stdscr):
         except KeyboardInterrupt: break
 
         user_activity_caused_draw_this_cycle = False
+
+        
 
         if key != -1:
             last_content_refresh_time = current_time
@@ -2223,6 +2248,14 @@ def main(stdscr):
                         if selected_subtask_index > -1:
                             selected_subtask_index -= 1
                         request_full_redraw = True
+                        if selected_subtask_index != -1:
+                            sub_task_name, _ = current_ticket_subtask_list_visible[selected_subtask_index]
+                            jira_ticket_id = inc.helpers.get_jira_ticket_from_url(sub_task_name)
+                            with jira_cache_lock:
+                                if jira_ticket_id in jira_cache and (jira_cache[jira_ticket_id].get('new_jira_comment') or jira_cache[jira_ticket_id].get('new_trello_comment')):
+                                    jira_cache[jira_ticket_id]['new_jira_comment'] = False
+                                    jira_cache[jira_ticket_id]['new_trello_comment'] = False
+                                    save_data(app_data) # Persist the change
                 elif key == curses.KEY_DOWN:
                     if current_ticket_subtask_list_visible:
                         last_idx = len(current_ticket_subtask_list_visible) - 1
@@ -2231,6 +2264,14 @@ def main(stdscr):
                         else:
                             selected_subtask_index = -1
                         request_full_redraw = True
+                        if selected_subtask_index != -1:
+                            sub_task_name, _ = current_ticket_subtask_list_visible[selected_subtask_index]
+                            jira_ticket_id = inc.helpers.get_jira_ticket_from_url(sub_task_name)
+                            with jira_cache_lock:
+                                if jira_ticket_id in jira_cache and (jira_cache[jira_ticket_id].get('new_jira_comment') or jira_cache[jira_ticket_id].get('new_trello_comment')):
+                                    jira_cache[jira_ticket_id]['new_jira_comment'] = False
+                                    jira_cache[jira_ticket_id]['new_trello_comment'] = False
+                                    save_data(app_data) # Persist the change
                 elif key == '\n' or key == curses.KEY_ENTER:
                     cmd_parts = command_buffer.split()
                     action_processed = False
