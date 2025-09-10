@@ -134,5 +134,12 @@
     "jira_login_prompt": "Not logged in to {service}. Press any key to login!!!",
     "jira_auth_error": "Jira auth error. Press any key to login!!!",
     "jira_http_error": "Jira 404 error!",
-    "jira_generic_error": "Jira generic error. Press any key to login!!!"
+    "jira_generic_error": "Jira generic error. Press any key to login!!!",
+    "web_change_notification": "{name} - {url}",
+    "ui_web_changes_header": "Changes detected:",
+    "web_change_notification_title": "Change detected",
+    "cmd_info_notification_dismissed": "Deleted notification",
+    "cmd_err_invalid_index": "Invalid index after ok-command",
+    "cmd_usage_ok": "Index missing after ok-command"
+
 }

@@ -17,6 +17,8 @@ import logging
 import threading
 import csv
 import io
+import hashlib
+from bs4 import BeautifulSoup
 
 # internal imports
 import inc.config_manager
@@ -65,6 +67,7 @@ permanent_notifications = []
 app_data = {}
 external_meetings = []
 external_meetings_lock = threading.Lock()
+web_change_notifications = []
 
 # -- Setup Locale --
 try:
@@ -76,6 +79,9 @@ except locale.Error as e:
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_FILE = os.path.join(SCRIPT_DIR, "jira_data.json")
 JIRA_BOX_FILE = os.path.join(SCRIPT_DIR, "jira_box2.txt")
+CACHE_DIR = os.path.join(SCRIPT_DIR, "cache")
+if not os.path.exists(CACHE_DIR):
+    os.makedirs(CACHE_DIR)
 
 # -- Color Pairs --
 (COLOR_PAIR_DEFAULT, COLOR_PAIR_REVERSE, COLOR_PAIR_GREY, COLOR_PAIR_PAUSED,
@@ -124,6 +130,55 @@ def poll_external_calendar():
             pass # Silently continue on network errors
         time.sleep(3600) # Poll every hour
 
+def poll_web_pages():
+    """Polls web pages for changes."""
+    global web_change_notifications
+    web_monitoring_config = inc.config_manager.config.get("WEB_MONITORING", {})
+    if not web_monitoring_config.get("ENABLED"):
+        if (web_change_notifications):
+            web_change_notifications = [];
+            save_data(app_data)
+        return
+
+    check_interval = web_monitoring_config.get("CHECK_INTERVAL_MINUTES", 30) * 60
+    pages = web_monitoring_config.get("PAGES", [])
+
+    while True:
+        for page in pages:
+            try:
+                response = requests.get(page["url"], timeout=20)
+                response.raise_for_status()
+                content = response.text
+
+                if page.get("selector"):
+                    soup = BeautifulSoup(content, 'lxml')
+                    element = soup.select_one(page["selector"])
+                    content = str(element) if element else ""
+
+                url_hash = hashlib.md5(page["url"].encode()).hexdigest()
+                cache_file = os.path.join(CACHE_DIR, f"{url_hash}.html")
+
+                last_content = ""
+                if os.path.exists(cache_file):
+                    with open(cache_file, 'r', encoding='utf-8') as f:
+                        last_content = f.read()
+
+                if content != last_content:
+                    with open(cache_file, 'w', encoding='utf-8') as f:
+                        f.write(content)
+
+                    notification_message = t('web_change_notification', name=page['name'], url=page['url'])
+                    if notification_message not in web_change_notifications:
+                        web_change_notifications.append(notification_message)
+                        send_desktop_notification(t('web_change_notification_title'), notification_message)
+                        save_data(app_data)
+
+
+            except requests.exceptions.RequestException as e:
+                print(t('polling_err', url=page["url"], e=e), file=sys.stderr)
+                pass # Silently continue on network errors
+        time.sleep(check_interval)
+
 def load_data():
     data = {}
     try:
@@ -149,6 +204,10 @@ def load_data():
     data.setdefault("recurring_events", [])
     data.setdefault("daily_notes", {})
     data.setdefault("show_hidden_tasks", False)
+    data.setdefault("web_change_notifications", [])
+    global web_change_notifications
+    web_change_notifications = data["web_change_notifications"]
+
 
     # Data migration and cleanup logic
     for ticket_name, sub_tasks_for_ticket in data.get("sub_tasks", {}).items():
@@ -196,6 +255,7 @@ def load_data():
     return data
 
 def save_data(data):
+    data["web_change_notifications"] = web_change_notifications
     try:
         with open(DATA_FILE, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=4, default=str, ensure_ascii=False)
@@ -720,7 +780,7 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
                current_date_for_daily_notes_arg=None, selected_note_idx=-1,
                jira_cache=None, jira_cache_lock=None, notes_scroll_offset=0):
 
-    global pull_requests_for_review, permanent_notifications
+    global pull_requests_for_review, permanent_notifications, web_change_notifications
 
     if current_view_mode == VIEW_DEDICATED_NOTES:
         return display_dedicated_notes_view(stdscr, data, command_buffer, entity_for_dedicated_notes, show_help_footer, selected_note_idx, jira_cache, jira_cache_lock, notes_scroll_offset)
@@ -956,6 +1016,16 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
             lines_used = _draw_wrapped_text(stdscr, focus_text, row, 0, effective_main_width, effective_main_width, content_height_obj, attr=curses.color_pair(COLOR_PAIR_FOCUSED) | curses.A_BOLD)
             row += lines_used
 
+    if web_change_notifications:
+        if effective_main_width > 0:
+            header_text = t('ui_web_changes_header')
+            lines_used = _draw_wrapped_text(stdscr, header_text, row, 0, effective_main_width, effective_main_width, content_height_obj, attr=curses.color_pair(COLOR_PAIR_URGENT_BOX))
+            row += lines_used
+        for i, notification in enumerate(web_change_notifications):
+            if content_height_obj[0] <= 0: break
+            lines_used = _draw_wrapped_text(stdscr, f"{i+1}. {notification}", row, 0, effective_main_width, effective_main_width, content_height_obj, prefix="", attr=curses.color_pair(COLOR_PAIR_URGENT_BOX))
+            row += lines_used
+
     with reviews_lock:
         if pull_requests_for_review:
             if effective_main_width > 0:
@@ -980,7 +1050,7 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
             lines_used = _draw_wrapped_text(stdscr, line, row, 0, effective_main_width, effective_main_width, content_height_obj, attr=curses.color_pair(COLOR_PAIR_URGENT_BOX))
             row += lines_used
 
-    if pull_requests_for_review or jira_box_lines:
+    if pull_requests_for_review or jira_box_lines or web_change_notifications:
         if effective_main_width > 0:
             lines_used = _draw_wrapped_text(stdscr, "---", row, 0, effective_main_width, effective_main_width, content_height_obj)
             row += lines_used
@@ -1538,6 +1608,7 @@ def show_permanent_notification(stdscr):
     except Exception: pass
 
 def handle_input(data, command_parts, stdscr, current_view_mode, selected_subtask_idx, selected_note_idx, current_ticket_subtask_list, all_displayable_tickets_for_cmd):
+    global web_change_notifications
     if current_view_mode != VIEW_MAIN:
         command = command_parts[0].lower() if command_parts else ""
         if command == 'q': return None
@@ -1553,6 +1624,22 @@ def handle_input(data, command_parts, stdscr, current_view_mode, selected_subtas
     current_ticket_name_val = data.get("current_ticket")
     data_was_modified = False
     command = command_parts[0].lower()
+
+    if command == "ok":
+        if len(command_parts) > 1:
+            try:
+                index_to_remove = int(command_parts[1]) - 1
+                if 0 <= index_to_remove < len(web_change_notifications):
+                    web_change_notifications.pop(index_to_remove)
+                    data_was_modified = True
+                    show_notification(stdscr, t('cmd_info_notification_dismissed'))
+                else:
+                    show_notification(stdscr, t('cmd_err_invalid_index'))
+            except ValueError:
+                show_notification(stdscr, t('cmd_err_invalid_index'))
+        else:
+            show_notification(stdscr, t('cmd_usage_ok'))
+        return data if data_was_modified else "NO_CHANGE"
 
     completed_tickets = data.get("completed_tickets", [])
     all_tickets_set = set()
@@ -2503,6 +2590,9 @@ def main(stdscr):
 
     calendar_polling_thread = threading.Thread(target=poll_external_calendar, args=(), daemon=True)
     calendar_polling_thread.start()
+
+    web_polling_thread = threading.Thread(target=poll_web_pages, args=(), daemon=True)
+    web_polling_thread.start()
 
     clock_refresh_interval = 1.0; last_clock_refresh_time = 0.0
     content_refresh_interval = 120.0; last_content_refresh_time = 0.0

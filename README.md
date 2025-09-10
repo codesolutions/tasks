@@ -32,11 +32,11 @@ A terminal-based tool for tracking personal projects, their associated tickets (
 1.  **Dependencies**: Ensure you have Python 3 and the `requests` library installed.
 
     ```bash
-    pip install requests selenium
+    pip install requests selenium beautifulsoup4 lxml
     # OR if that is not working, add virtual env (preferred):
     python3 -m venv .venv
     source .venv/bin/activate
-    python3 -m pip install requests selenium
+    python3 -m pip install requests selenium beautifulsoup4 lxml
     ```
 
     For desktop notifications on Linux, the following tools are required:

@@ -134,5 +134,11 @@
     "jira_login_prompt": "Kirjaudu palveluun {service} painamalla enteriä!!!",
     "jira_auth_error": "Jira käyttöoikeusvirhe. Kirjaudu painamalla enteriä!!!",
     "jira_http_error": "Jira 404 virhe!",
-    "jira_generic_error": "Jira yleinen virhe. Kirjaudu painamalla enteriä!!!"
+    "jira_generic_error": "Jira yleinen virhe. Kirjaudu painamalla enteriä!!!",
+    "web_change_notification": "{name} - {url}",
+    "ui_web_changes_header": "Muutoksia sivuilla:",
+    "web_change_notification_title": "Muutos havaittu",
+    "cmd_info_notification_dismissed": "Poistettu",
+    "cmd_err_invalid_index": "Väärä indeksi",
+    "cmd_usage_ok": "Indeksi puuttuu"
 }

@@ -16,5 +16,23 @@
     "CHROME_DRIVER_PATH": "chromedriver-linux64/chromedriver",
     "TRELLO_URL": "https://trello.com",
     "TRELLO_SESSION_FILE": "trello_session.pkl",
-    "CALENDAR_CSV": "https://docs.google.com/spreadsheets/d/e/YOUR_EXPORTED_CALENDAR_CSV_HERE/pub?gid=0&single=true&output=csv"
+    "CALENDAR_CSV": "https://docs.google.com/spreadsheets/d/e/YOUR_EXPORTED_CALENDAR_CSV_HERE/pub?gid=0&single=true&output=csv",
+    "WEB_MONITORING": {
+        "ENABLED": true,
+        "CHECK_INTERVAL_MINUTES": 30,
+        "PAGES": [
+            {
+                "name": "Example Site",
+                "url": "https://example.com",
+                "selector": null,
+                "description": "Monitor entire page for changes"
+            },
+            {
+                "name": "News Section",
+                "url": "https://news.example.com",
+                "selector": ".news-content",
+                "description": "Monitor only news content div"
+            }
+        ]
+    }
 }

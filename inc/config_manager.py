@@ -25,7 +25,13 @@ def load_config():
         "JIRA_SESSION_FILE": "jira_session.pkl",
         "CHROME_DRIVER_PATH": "path/to/your/chromedriver",
         "TRELLO_URL": "https://trello.com",
-        "TRELLO_SESSION_FILE": "trello_session.pkl"
+        "TRELLO_SESSION_FILE": "trello_session.pkl",
+        "CALENDAR_CSV": "https://docs.google.com/spreadsheets/d/e/YOUR_EXPORTED_CALENDAR_CSV_HERE/pub?gid=0&single=true&output=csv",
+        "WEB_MONITORING": {
+            "ENABLED": False,
+            "CHECK_INTERVAL_MINUTES": 30,
+            "PAGES": []
+        }
     }
     try:
         with open(config_path, 'r', encoding='utf-8') as f:
@@ -55,5 +61,3 @@ def load_translations():
     except FileNotFoundError:
         print(f"Warning: Language file '{path}' not found. Using empty strings.", file=sys.stderr)
         STRINGS = {}
-
-
