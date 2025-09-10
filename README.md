@@ -65,7 +65,19 @@ A terminal-based tool for tracking personal projects, their associated tickets (
         "CHROME_DRIVER_PATH": "chromedriver-linux64/chromedriver",
         "TRELLO_URL": "https://trello.com",
         "TRELLO_SESSION_FILE": "trello_session.pkl",
-        "CALENDAR_CSV": "https://docs.google.com/spreadsheets/d/e/YOUR_EXPORTED_CALENDAR_CSV_HERE/pub?gid=0&single=true&output=csv"
+        "CALENDAR_CSV": "https://docs.google.com/spreadsheets/d/e/YOUR_EXPORTED_CALENDAR_CSV_HERE/pub?gid=0&single=true&output=csv",
+        "WEB_MONITORING": {
+            "ENABLED": true,
+            "CHECK_INTERVAL_MINUTES": 30,
+            "PAGES": [
+                {
+                    "name": "Magento Security",
+                    "url": "https://helpx.adobe.com/security/products/magento.html",
+                    "selector": "#root_content_flex_items_position_position-par_table_copy > table > tbody > tr:nth-child(2) > td",
+                    "description": "Security Updates for Magento"
+                }
+            ]
+        }
     }
     ```
 
