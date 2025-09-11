@@ -5,8 +5,8 @@ from typing import Dict, Any, Optional
 
 # This module encapsulates time tracking concerns: entries, work sessions, and hourly check-ins.
 
-DEFAULT_INTERVAL_MINUTES = 60
-DEFAULT_FORGETFUL_MINUTES = 15
+DEFAULT_INTERVAL_MINUTES = 2
+DEFAULT_FORGETFUL_MINUTES = 1
 
 
 def _now_ts() -> float:
@@ -19,6 +19,110 @@ def _today_iso() -> str:
 
 def _utc_iso_now() -> str:
     return datetime.utcnow().isoformat() + "Z"
+
+
+def normalize_subtask_identifier(subtask: str) -> str:
+    """Convert any subtask format to standardized '[Project] TICKET-123' format."""
+    if not subtask:
+        return subtask
+    
+    # If it's already in [Project] TICKET format, return as is
+    if subtask.startswith('[') and '] ' in subtask:
+        return subtask
+    
+    # Extract from URL format: https://domain.com/browse/TICKET-123
+    if 'browse/' in subtask:
+        ticket_id = subtask.split('browse/')[-1]
+        # For now, we'll use a generic project name if we can't determine it
+        # In future, this could be enhanced to extract project from URL or config
+        return f"[Unknown] {ticket_id}"
+    
+    # If it's just a ticket ID like DCMIN-906, try to find matching project
+    if '-' in subtask and subtask.replace('-', '').replace('_', '').isalnum():
+        # This looks like a ticket ID, return as is with Unknown project for now
+        return f"[Unknown] {subtask}"
+    
+    return subtask
+
+
+def find_matching_subtask(data: Dict[str, Any], target_subtask: str) -> Optional[str]:
+    """Find an existing subtask that matches the target, handling various formats."""
+    if not target_subtask:
+        return None
+    
+    # Extract ticket ID from various formats
+    target_ticket_id = None
+    if 'browse/' in target_subtask:
+        # URL format: https://domain.com/browse/TICKET-123
+        target_ticket_id = target_subtask.split('browse/')[-1]
+    elif target_subtask.startswith('[') and '] ' in target_subtask:
+        # Already normalized format: [Project] TICKET-123
+        target_ticket_id = target_subtask.split('] ', 1)[1]
+    elif '-' in target_subtask and len(target_subtask.split('-')) == 2:
+        # Direct ticket ID: TICKET-123
+        parts = target_subtask.split('-')
+        if parts[0].isalpha() and parts[1].isdigit():
+            target_ticket_id = target_subtask.upper()
+    
+    if not target_ticket_id:
+        # If we can't extract a ticket ID, just normalize and return
+        return normalize_subtask_identifier(target_subtask)
+    
+    # Search through existing subtasks for matches
+    best_match = None
+    for ticket_name, subtasks in data.get("sub_tasks", {}).items():
+        for subtask_name in subtasks.keys():
+            # Extract ticket ID from existing subtask (could be URL format)
+            existing_ticket_id = None
+            if 'browse/' in subtask_name:
+                existing_ticket_id = subtask_name.split('browse/')[-1]
+            elif subtask_name.startswith('[') and '] ' in subtask_name:
+                existing_ticket_id = subtask_name.split('] ', 1)[1]
+            elif '-' in subtask_name:
+                # Could be a direct ticket ID
+                existing_ticket_id = subtask_name
+            
+            # Check for exact match
+            if existing_ticket_id and existing_ticket_id.upper() == target_ticket_id.upper():
+                # Found exact match - return in standardized format with correct project name
+                return f"[{ticket_name}] {existing_ticket_id.upper()}"
+    
+    # No exact match found - try to find a good project to assign it to
+    # Look for projects that have similar ticket prefixes
+    target_prefix = target_ticket_id.split('-')[0] if '-' in target_ticket_id else target_ticket_id
+    
+    best_project = None
+    max_score = 0
+    
+    for ticket_name, subtasks in data.get("sub_tasks", {}).items():
+        matching_count = 0
+        total_count = 0
+        
+        for subtask_name in subtasks.keys():
+            # Extract ticket ID to check prefix
+            existing_ticket_id = None
+            if 'browse/' in subtask_name:
+                existing_ticket_id = subtask_name.split('browse/')[-1]
+            elif '-' in subtask_name:
+                existing_ticket_id = subtask_name.split('/')[-1] if '/' in subtask_name else subtask_name
+            
+            if existing_ticket_id and '-' in existing_ticket_id:
+                total_count += 1
+                existing_prefix = existing_ticket_id.split('-')[0]
+                if existing_prefix.upper() == target_prefix.upper():
+                    matching_count += 1
+        
+        if total_count > 0:
+            score = matching_count / total_count
+            if score > max_score:
+                max_score = score
+                best_project = ticket_name
+    
+    if best_project and max_score > 0.5:  # At least 50% match
+        return f"[{best_project}] {target_ticket_id.upper()}"
+    
+    # If no good match found, return with generic project name
+    return f"[Unknown] {target_ticket_id.upper()}"
 
 
 def ensure_time_tracking_defaults(data: Dict[str, Any]) -> None:
@@ -35,9 +139,15 @@ def add_time_entry(data: Dict[str, Any], *, entry_date_iso: Optional[str] = None
     if entry_date_iso is None:
         entry_date_iso = _today_iso()
     ensure_time_tracking_defaults(data)
+    
+    # Normalize and match subtask identifier if it's a task
+    normalized_subtask = subtask
+    if entry_type == "task" and subtask:
+        normalized_subtask = find_matching_subtask(data, subtask)
+    
     data.setdefault("time_log", {}).setdefault(entry_date_iso, []).append({
         "type": entry_type,  # 'task' | 'break' | 'meeting'
-        "subtask": subtask,
+        "subtask": normalized_subtask,
         "seconds": int(max(0, seconds)),
         "created_at": _utc_iso_now(),
     })

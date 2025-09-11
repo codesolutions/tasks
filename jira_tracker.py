@@ -784,7 +784,8 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
                current_view_mode=VIEW_MAIN, entity_for_dedicated_notes=None,
                current_ticket_subtask_list_for_display_arg=None, show_help_footer=True,
                current_date_for_daily_notes_arg=None, selected_note_idx=-1,
-               jira_cache=None, jira_cache_lock=None, notes_scroll_offset=0):
+               jira_cache=None, jira_cache_lock=None, notes_scroll_offset=0,
+               selected_checkin_task_idx=-1):
 
     global pull_requests_for_review, permanent_notifications, web_change_notifications, reviews_lock, external_meetings_lock
 
@@ -798,7 +799,7 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
         return display_time_log_view(stdscr, data, current_date_for_daily_notes_arg)
     elif current_view_mode == VIEW_HOURLY_CHECKIN:
         from inc.views.hourly_checkin_view import display_hourly_checkin_view
-        return display_hourly_checkin_view(stdscr, data, selected_note_idx)  # reusing selected_note_idx as selected_task_index
+        return display_hourly_checkin_view(stdscr, data, selected_checkin_task_idx)
     
     # Default to main view rendering
     from inc.views.main_view import display_main_view
@@ -1162,17 +1163,14 @@ def handle_input(data, command_parts, stdscr, current_view_mode, selected_subtas
             work_session = data.get("work_session", {})
             if work_session.get("active") and not work_session.get("paused"):
                 prev_focused = data.get("focused_subtask")
-                if prev_focused and work_session.get("current_timer_start_ts"):
+                prev_focused_ticket = data.get("focused_ticket")
+                if prev_focused and prev_focused_ticket and work_session.get("current_timer_start_ts"):
                     elapsed_seconds = int(datetime.now().timestamp() - work_session["current_timer_start_ts"])
                     if elapsed_seconds > 0:
-                        today_str = date.today().isoformat()
-                        time_entry = {
-                            "type": "task",
-                            "subtask": prev_focused,
-                            "seconds": elapsed_seconds,
-                            "timestamp": datetime.now().isoformat()
-                        }
-                        data.setdefault("time_log", {}).setdefault(today_str, []).append(time_entry)
+                        from inc.time_tracker import add_time_entry
+                        # Use the standardized format for time logging
+                        normalized_subtask = f"[{prev_focused_ticket}] {prev_focused}"
+                        add_time_entry(data, entry_type="task", subtask=normalized_subtask, seconds=elapsed_seconds)
             
             # Unfocus all other subtasks in the current ticket
             for st_name, st_details in data["sub_tasks"][current_ticket_name_val].items():
@@ -1240,17 +1238,14 @@ def handle_input(data, command_parts, stdscr, current_view_mode, selected_subtas
                 work_session = data.get("work_session", {})
                 if work_session.get("active") and not work_session.get("paused"):
                     prev_focused = data.get("focused_subtask")
-                    if prev_focused and work_session.get("current_timer_start_ts"):
+                    prev_focused_ticket = data.get("focused_ticket")
+                    if prev_focused and prev_focused_ticket and work_session.get("current_timer_start_ts"):
                         elapsed_seconds = int(datetime.now().timestamp() - work_session["current_timer_start_ts"])
                         if elapsed_seconds > 0:
-                            today_str = date.today().isoformat()
-                            time_entry = {
-                                "type": "task",
-                                "subtask": prev_focused,
-                                "seconds": elapsed_seconds,
-                                "timestamp": datetime.now().isoformat()
-                            }
-                            data.setdefault("time_log", {}).setdefault(today_str, []).append(time_entry)
+                            from inc.time_tracker import add_time_entry
+                            # Use the standardized format for time logging
+                            normalized_subtask = f"[{prev_focused_ticket}] {prev_focused}"
+                            add_time_entry(data, entry_type="task", subtask=normalized_subtask, seconds=elapsed_seconds)
                 
                 # Clear all previous focuses
                 data["focused_ticket"] = None
@@ -1364,14 +1359,13 @@ def handle_input(data, command_parts, stdscr, current_view_mode, selected_subtas
             if work_session.get("current_timer_start_ts") and data.get("focused_subtask"):
                 elapsed_seconds = int(datetime.now().timestamp() - work_session["current_timer_start_ts"])
                 if elapsed_seconds > 0:
-                    today_str = date.today().isoformat()
-                    time_entry = {
-                        "type": "task",
-                        "subtask": data["focused_subtask"],
-                        "seconds": elapsed_seconds,
-                        "timestamp": datetime.now().isoformat()
-                    }
-                    data.setdefault("time_log", {}).setdefault(today_str, []).append(time_entry)
+                    from inc.time_tracker import add_time_entry
+                    focused_ticket = data.get("focused_ticket")
+                    focused_subtask = data.get("focused_subtask")
+                    if focused_ticket and focused_subtask:
+                        # Use the standardized format for time logging
+                        normalized_subtask = f"[{focused_ticket}] {focused_subtask}"
+                        add_time_entry(data, entry_type="task", subtask=normalized_subtask, seconds=elapsed_seconds)
             
             work_session["active"] = False
             work_session["end_time"] = datetime.now().isoformat()
@@ -1390,14 +1384,13 @@ def handle_input(data, command_parts, stdscr, current_view_mode, selected_subtas
             if work_session.get("current_timer_start_ts") and data.get("focused_subtask"):
                 elapsed_seconds = int(datetime.now().timestamp() - work_session["current_timer_start_ts"])
                 if elapsed_seconds > 0:
-                    today_str = date.today().isoformat()
-                    time_entry = {
-                        "type": "task",
-                        "subtask": data["focused_subtask"],
-                        "seconds": elapsed_seconds,
-                        "timestamp": datetime.now().isoformat()
-                    }
-                    data.setdefault("time_log", {}).setdefault(today_str, []).append(time_entry)
+                    from inc.time_tracker import add_time_entry
+                    focused_ticket = data.get("focused_ticket")
+                    focused_subtask = data.get("focused_subtask")
+                    if focused_ticket and focused_subtask:
+                        # Use the standardized format for time logging
+                        normalized_subtask = f"[{focused_ticket}] {focused_subtask}"
+                        add_time_entry(data, entry_type="task", subtask=normalized_subtask, seconds=elapsed_seconds)
             
             work_session["paused"] = True
             work_session["pause_time"] = datetime.now().isoformat()
@@ -1423,17 +1416,44 @@ def handle_input(data, command_parts, stdscr, current_view_mode, selected_subtas
         return "VIEW_TIME_LOG"
     
     elif command == 'logtime':
-        if len(command_parts) >= 3:
+        if len(command_parts) >= 2:
             try:
-                # logtime <subtask> <minutes> [date]
-                subtask_name = command_parts[1]
-                minutes = int(command_parts[2])
+                # Two formats supported:
+                # logtime <minutes> [date] - logs to focused subtask
+                # logtime <subtask> <minutes> [date] - logs to specified subtask
+                
+                subtask_name = None
+                minutes = None
                 target_date = date.today().isoformat()
                 
-                if len(command_parts) >= 4:
-                    # Parse date if provided (YYYY-MM-DD format)
-                    target_date = command_parts[3]
-                    date.fromisoformat(target_date)  # Validate date format
+                # Try to parse first argument as minutes (focused subtask mode)
+                try:
+                    minutes = int(command_parts[1])
+                    # First arg is minutes, use focused subtask
+                    if data.get("focused_subtask") and data.get("focused_ticket"):
+                        subtask_name = f"[{data['focused_ticket']}] {data['focused_subtask']}"
+                    else:
+                        show_notification(stdscr, "No subtask currently focused. Use: logtime <subtask> <minutes> [date]")
+                        return "NO_CHANGE"
+                    
+                    # Check for optional date in 3rd position
+                    if len(command_parts) >= 3:
+                        target_date = command_parts[2]
+                        date.fromisoformat(target_date)  # Validate date format
+                        
+                except ValueError:
+                    # First arg is not minutes, assume it's subtask name
+                    if len(command_parts) >= 3:
+                        subtask_name = command_parts[1]
+                        minutes = int(command_parts[2])
+                        
+                        # Check for optional date in 4th position
+                        if len(command_parts) >= 4:
+                            target_date = command_parts[3]
+                            date.fromisoformat(target_date)  # Validate date format
+                    else:
+                        show_notification(stdscr, "Usage: logtime <minutes> [date] OR logtime <subtask> <minutes> [date]")
+                        return "NO_CHANGE"
                 
                 # Convert minutes to seconds
                 seconds = minutes * 60
@@ -1442,11 +1462,19 @@ def handle_input(data, command_parts, stdscr, current_view_mode, selected_subtas
                 from inc.time_tracker import add_time_entry
                 add_time_entry(data, entry_type="task", subtask=subtask_name, seconds=seconds, entry_date_iso=target_date)
                 data_was_modified = True
-                show_notification(stdscr, f"Logged {minutes} minutes for {subtask_name}")
+                
+                # Show appropriate notification
+                from inc.time_tracker import normalize_subtask_identifier
+                display_name = normalize_subtask_identifier(subtask_name)
+                show_notification(stdscr, f"Logged {minutes} minutes for {display_name}")
+                
             except ValueError as e:
                 show_notification(stdscr, f"Invalid time or date format: {str(e)}")
         else:
-            show_notification(stdscr, "Usage: logtime <subtask> <minutes> [YYYY-MM-DD]")
+            if data.get("focused_subtask"):
+                show_notification(stdscr, "Usage: logtime <minutes> [date] OR logtime <subtask> <minutes> [date]")
+            else:
+                show_notification(stdscr, "Usage: logtime <subtask> <minutes> [date] (no subtask focused)")
 
     elif command == 'q':
         return None
@@ -2356,9 +2384,30 @@ def main(stdscr):
                     command_buffer = ""; request_full_redraw = True
                 
                 elif key in ['S', 's']:
-                    # User wants to select a different task - toggle selection mode
-                    if selected_checkin_task_index == -1:
-                        selected_checkin_task_index = 0  # Start selection
+                    # User wants to select a different task - start selection mode
+                    # Get available tasks to ensure we have a valid starting index
+                    available_tasks = []
+                    with data_lock:
+                        current_ticket = app_data.get("current_ticket")
+                        if current_ticket:
+                            subtasks = app_data.get("sub_tasks", {}).get(current_ticket, {})
+                            for sub_name, sub_details in subtasks.items():
+                                if isinstance(sub_details, dict) and sub_details.get("status") != "hidden":
+                                    available_tasks.append((current_ticket, sub_name))
+                        
+                        # Add paused tasks
+                        for paused_task in app_data.get("paused_tasks", []):
+                            ticket_name = paused_task.get("ticket")
+                            if ticket_name:
+                                subtasks = paused_task.get("sub_tasks", {})
+                                for sub_name, sub_details in subtasks.items():
+                                    if isinstance(sub_details, dict) and sub_details.get("status") != "hidden":
+                                        available_tasks.append((ticket_name, sub_name))
+                    
+                    if available_tasks:
+                        selected_checkin_task_index = 0  # Start selection at first task
+                    else:
+                        selected_checkin_task_index = -1  # No tasks available
                     request_full_redraw = True
                 
                 elif key in ['B', 'b']:
@@ -2390,9 +2439,7 @@ def main(stdscr):
                     request_full_redraw = True
                 
                 elif key == curses.KEY_DOWN:
-                    # Get available tasks from the hourly check-in view
-                    from inc.views.hourly_checkin_view import display_hourly_checkin_view
-                    # We'll need the task list - this is a bit hacky but works
+                    # Get available tasks - build consistent task list
                     available_tasks = []
                     with data_lock:
                         current_ticket = app_data.get("current_ticket")
@@ -2400,7 +2447,7 @@ def main(stdscr):
                             subtasks = app_data.get("sub_tasks", {}).get(current_ticket, {})
                             for sub_name, sub_details in subtasks.items():
                                 if isinstance(sub_details, dict) and sub_details.get("status") != "hidden":
-                                    available_tasks.append(f"[{current_ticket}] {sub_name}")
+                                    available_tasks.append((current_ticket, sub_name))
                         
                         # Add paused tasks
                         for paused_task in app_data.get("paused_tasks", []):
@@ -2409,9 +2456,9 @@ def main(stdscr):
                                 subtasks = paused_task.get("sub_tasks", {})
                                 for sub_name, sub_details in subtasks.items():
                                     if isinstance(sub_details, dict) and sub_details.get("status") != "hidden":
-                                        available_tasks.append(f"[{ticket_name}] {sub_name}")
+                                        available_tasks.append((ticket_name, sub_name))
                     
-                    if selected_checkin_task_index < len(available_tasks) - 1:
+                    if selected_checkin_task_index != -1 and selected_checkin_task_index < len(available_tasks) - 1:
                         selected_checkin_task_index += 1
                     request_full_redraw = True
                 
@@ -2440,9 +2487,9 @@ def main(stdscr):
                             pending = app_data.get("pending_checkin", {})
                             if pending:
                                 duration_seconds = pending.get("duration_seconds", 3600)
-                                formatted_subtask = f"[{selected_ticket}] {selected_subtask}"
+                                # Use the actual subtask identifier, which will be normalized by add_time_entry
                                 from inc.time_tracker import add_time_entry
-                                add_time_entry(app_data, entry_type="task", subtask=formatted_subtask, seconds=duration_seconds)
+                                add_time_entry(app_data, entry_type="task", subtask=selected_subtask, seconds=duration_seconds)
                                 save_data(app_data)
                             app_data["pending_checkin"] = None
                             save_data(app_data)
@@ -2454,7 +2501,7 @@ def main(stdscr):
             # Redraw the UI after every valid keypress.
             request_full_redraw = True
             last_content_refresh_time = 0
-            display_ui(stdscr, app_data, command_buffer, request_full_redraw, selected_subtask_index, current_view, entity_for_dedicated_notes, current_ticket_subtask_list_visible, show_help_footer, current_date_for_daily_notes, selected_note_index, jira_cache, jira_cache_lock, notes_scroll_offset)
+            display_ui(stdscr, app_data, command_buffer, request_full_redraw, selected_subtask_index, current_view, entity_for_dedicated_notes, current_ticket_subtask_list_visible, show_help_footer, current_date_for_daily_notes, selected_note_index, jira_cache, jira_cache_lock, notes_scroll_offset, selected_checkin_task_index)
             if request_full_redraw : request_full_redraw = False
 
         if not user_activity_caused_draw_this_cycle:
@@ -2462,7 +2509,7 @@ def main(stdscr):
                 request_full_redraw = True
 
             if request_full_redraw or (current_time - last_clock_refresh_time >= clock_refresh_interval):
-                display_ui(stdscr, app_data, command_buffer, request_full_redraw, selected_subtask_index, current_view, entity_for_dedicated_notes, current_ticket_subtask_list_visible, show_help_footer, current_date_for_daily_notes, selected_note_index, jira_cache, jira_cache_lock, notes_scroll_offset)
+                display_ui(stdscr, app_data, command_buffer, request_full_redraw, selected_subtask_index, current_view, entity_for_dedicated_notes, current_ticket_subtask_list_visible, show_help_footer, current_date_for_daily_notes, selected_note_index, jira_cache, jira_cache_lock, notes_scroll_offset, selected_checkin_task_index)
                 last_clock_refresh_time = current_time
                 if request_full_redraw:
                     last_content_refresh_time = current_time

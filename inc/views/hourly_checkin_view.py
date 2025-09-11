@@ -49,17 +49,27 @@ def display_hourly_checkin_view(stdscr, data, selected_task_index=-1):
     
     # If user selected 'S', show task selection
     if selected_task_index >= 0:
-        stdscr.addstr(row, 2, "Select a task:")
+        stdscr.addstr(row, 2, "Select a task to log time to:")
         row += 1
         
         # Get all available subtasks from current and paused tasks
         available_tasks = []
+        display_names = []
         current_ticket = data.get("current_ticket")
         if current_ticket:
             subtasks = data.get("sub_tasks", {}).get(current_ticket, {})
             for sub_name, sub_details in subtasks.items():
                 if isinstance(sub_details, dict) and sub_details.get("status") != "hidden":
-                    available_tasks.append(f"[{current_ticket}] {sub_name}")
+                    # Store actual task tuple for processing
+                    available_tasks.append((current_ticket, sub_name))
+                    # Clean display name from URL format
+                    display_name = sub_name
+                    if 'browse/' in sub_name:
+                        ticket_id = sub_name.split('browse/')[-1]
+                        display_name = f"[{current_ticket}] {ticket_id}"
+                    else:
+                        display_name = f"[{current_ticket}] {sub_name}"
+                    display_names.append(display_name)
         
         # Add paused tasks
         for paused_task in data.get("paused_tasks", []):
@@ -68,18 +78,37 @@ def display_hourly_checkin_view(stdscr, data, selected_task_index=-1):
                 subtasks = paused_task.get("sub_tasks", {})
                 for sub_name, sub_details in subtasks.items():
                     if isinstance(sub_details, dict) and sub_details.get("status") != "hidden":
-                        available_tasks.append(f"[{ticket_name}] {sub_name}")
+                        # Store actual task tuple for processing
+                        available_tasks.append((ticket_name, sub_name))
+                        # Clean display name from URL format
+                        display_name = sub_name
+                        if 'browse/' in sub_name:
+                            ticket_id = sub_name.split('browse/')[-1]
+                            display_name = f"[{ticket_name}] {ticket_id}"
+                        else:
+                            display_name = f"[{ticket_name}] {sub_name}"
+                        display_names.append(display_name)
         
-        # Display tasks with selection
-        for i, task in enumerate(available_tasks[:10]):  # Limit to 10 for screen space
-            attr = curses.color_pair(5) if i == selected_task_index else curses.color_pair(1)
-            prefix = ">" if i == selected_task_index else " "
-            stdscr.addstr(row, 4, f"{prefix}{i+1}. {task[:width-10]}", attr)
+        if not available_tasks:
+            stdscr.addstr(row, 4, "No tasks available.")
             row += 1
+        else:
+            # Display tasks with selection
+            for i, display_name in enumerate(display_names[:min(10, height-row-5)]):  # Limit based on screen space
+                try:
+                    if i == selected_task_index:
+                        # Highlight selected task
+                        stdscr.addstr(row, 4, f"▶ {display_name[:width-10]}")
+                    else:
+                        stdscr.addstr(row, 4, f"  {display_name[:width-10]}")
+                    row += 1
+                except curses.error:
+                    break  # Screen too small
+            
+            row += 1
+            stdscr.addstr(row, 2, f"Use ↑↓ arrows to navigate, ENTER to select ({selected_task_index + 1}/{len(available_tasks)})")
         
-        if available_tasks:
-            row += 1
-            stdscr.addstr(row, 2, "Use UP/DOWN to select, ENTER to confirm.")
+        row += 1
     
     stdscr.addstr(height - 1, 2, "Press ESC to cancel this check-in.")
     stdscr.refresh()

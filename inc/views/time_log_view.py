@@ -75,8 +75,23 @@ def display_time_log_view(stdscr, data, current_date_for_log):
                 stdscr.addstr(row, 2, "... (more entries)")
                 break
             time_str = format_timedelta_minutes(timedelta(seconds=seconds))
-            # Truncate long subtask names to fit on screen
-            display_name = subtask[:width-20] if len(subtask) > width-20 else subtask
+            
+            # Extract clean display name from subtask identifier
+            display_name = subtask
+            if subtask.startswith('[') and '] ' in subtask:
+                # Format: '[ProjectName] TICKET-123' -> show as is
+                display_name = subtask
+            elif 'browse/' in subtask:
+                # Old URL format - extract just the ticket ID
+                ticket_id = subtask.split('browse/')[-1]
+                project_match = subtask.split('/browse/')[0].split('/')[-1] if '/' in subtask else None
+                if project_match:
+                    display_name = f"[{project_match}] {ticket_id}"
+                else:
+                    display_name = ticket_id
+            
+            # Truncate if too long
+            display_name = display_name[:width-20] if len(display_name) > width-20 else display_name
             stdscr.addstr(row, 2, f"• {display_name}: {time_str}")
             row += 1
     
