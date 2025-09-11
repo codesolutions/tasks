@@ -31,6 +31,11 @@ def load_config():
             "ENABLED": False,
             "CHECK_INTERVAL_MINUTES": 30,
             "PAGES": []
+        },
+        "TIME_TRACKING": {
+            "ENABLED": True,
+            "HOURLY_CHECKIN_ENABLED": True,
+            "CHECKIN_INTERVAL_MINUTES": 60
         }
     }
     try:

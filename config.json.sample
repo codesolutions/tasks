@@ -34,5 +34,10 @@
                 "description": "Monitor only news content div"
             }
         ]
+    },
+    "TIME_TRACKING": {
+        "ENABLED": true,
+        "HOURLY_CHECKIN_ENABLED": true,
+        "CHECKIN_INTERVAL_MINUTES": 60
     }
 }

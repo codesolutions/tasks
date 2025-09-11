@@ -94,6 +94,8 @@ if not os.path.exists(CACHE_DIR):
 VIEW_MAIN = "main"
 VIEW_DEDICATED_NOTES = "dedicated_notes"
 VIEW_DAILY_NOTES = "daily_notes"
+VIEW_TIME_LOG = "time_log"
+VIEW_HOURLY_CHECKIN = "hourly_checkin"
 
 WEEKDAY_MAP = {
     'ma': 0, 'mo': 0, 'ti': 1, 'tu': 1, 'ke': 2, 'we': 2,
@@ -198,6 +200,10 @@ def load_data():
     data.setdefault("sub_tasks", {})
     data.setdefault("tasks_done", {})
     data.setdefault("meetings", [])
+    
+    # Time tracking data structures
+    from inc.time_tracker import ensure_time_tracking_defaults
+    ensure_time_tracking_defaults(data)
     data.setdefault("interruptions", [])
     data.setdefault("notes", {})
     data.setdefault("paused_tasks", [])
@@ -780,793 +786,29 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
                current_date_for_daily_notes_arg=None, selected_note_idx=-1,
                jira_cache=None, jira_cache_lock=None, notes_scroll_offset=0):
 
-    global pull_requests_for_review, permanent_notifications, web_change_notifications
+    global pull_requests_for_review, permanent_notifications, web_change_notifications, reviews_lock, external_meetings_lock
 
+    # Dispatch to appropriate view handlers
     if current_view_mode == VIEW_DEDICATED_NOTES:
         return display_dedicated_notes_view(stdscr, data, command_buffer, entity_for_dedicated_notes, show_help_footer, selected_note_idx, jira_cache, jira_cache_lock, notes_scroll_offset)
-    if current_view_mode == VIEW_DAILY_NOTES:
+    elif current_view_mode == VIEW_DAILY_NOTES:
         return display_daily_notes_view(stdscr, data, command_buffer, current_date_for_daily_notes_arg, show_help_footer, selected_note_idx)
-
-    try:
-        height, width = stdscr.getmaxyx()
-    except curses.error: return False
-    now_time_str = datetime.now().strftime("%H:%M:%S")
-    now_dt = datetime.now()
-    today_start = now_dt.replace(hour=0, minute=0, second=0, microsecond=0)
-
-    if height <= 0 or width <= 0: return False
-
-    completed_tickets = data.get("completed_tickets", [])
-    all_tickets_set = set()
-    if data.get("current_ticket"): all_tickets_set.add(data.get("current_ticket"))
-    all_tickets_set.update(data.get("sub_tasks", {}).keys())
-    all_tickets_set.update(data.get("notes", {}).keys())
-    for paused_item in data.get("paused_tasks", []):
-        if paused_item.get("ticket"): all_tickets_set.add(paused_item["ticket"])
-
-    all_displayable_tickets = sorted([t for t in list(filter(None, all_tickets_set)) if t not in completed_tickets])
-
-    # To avoid locking frequently, we make a quick copy of the cache for this render pass.
-    with jira_cache_lock:
-        cache_copy = jira_cache.copy()
-
-    # Define the cache timeout (10 minutes = 600 seconds) as you suggested
-    JIRA_CACHE_TIMEOUT = 60
-    now = time.time()
-
-    display_right_panel = bool(all_displayable_tickets)
-    separator_char = "|"
-    effective_main_width = width
-    min_main_content_width = 35
-    min_panel_item_len = 8
-    actual_panel_content_width = 0
-
-    if display_right_panel:
-        max_len_of_panel_item_str = 0
-        if all_displayable_tickets:
-            for idx, ticket_name_in_panel in enumerate(all_displayable_tickets):
-                if idx < height -1:
-                    max_len_of_panel_item_str = max(max_len_of_panel_item_str, len(f"{idx+1}. {ticket_name_in_panel}"))
-
-        actual_panel_content_width = max(max_len_of_panel_item_str, min_panel_item_len)
-        if width - (actual_panel_content_width + len(separator_char)) >= min_main_content_width:
-            effective_main_width = width - (actual_panel_content_width + len(separator_char))
-        else:
-            effective_main_width = min_main_content_width
-            actual_panel_content_width = width - effective_main_width - len(separator_char)
-            if actual_panel_content_width < min_panel_item_len / 2 :
-                display_right_panel = False
-                effective_main_width = width
-                actual_panel_content_width = 0
-
-    if effective_main_width < 0 : effective_main_width = 0
-    if effective_main_width > width : effective_main_width = width
-    if not display_right_panel: effective_main_width = width; actual_panel_content_width = 0
-
-    max_cmd_len = width -1
-    max_buffer_len = max_cmd_len - len("> ")
-    if max_buffer_len < 0: max_buffer_len = 0
-    display_buffer = command_buffer[:max_buffer_len]
-    command_line_text = "> " + display_buffer
-    cursor_x = len(command_line_text)
-
-    help_lines_definitions = {
-        "full": [
-            t('help_header'), t('help_switch_task'), t('help_new_task'), t('help_add_subtask'),
-            t('help_hide_subtask'), t('help_add_pr'), t('help_done_subtask'), t('help_done_task'),
-            t('help_add_meeting'), t('help_add_event'), t('help_add_note'), t('help_set_focus'), t('help_set_subtask_focus'), t('help_toggle_help'),
-            t('help_daily_notes'), t('help_notes_view'), t('help_quit')
-        ],
-        "hidden": [t('help_hidden_prompt')]
-    }
-    current_help_lines_list = help_lines_definitions["full"] if show_help_footer else help_lines_definitions["hidden"]
-    num_actual_help_lines = len(current_help_lines_list)
-    footer_total_height = num_actual_help_lines + 2
-
-    show_permanent_notification(stdscr)
-
-    #if full_redraw:
-    #    stdscr.clear()
-
-    # Define dimensions for the main content window
-    # We place it at y=1 to leave space for the clock at the top
-    #main_win_h = height - 1 - footer_total_height
-    #main_win_w = effective_main_width
-
-    # Create the new window for the main content
-    # We only create the window if there's enough space for it
-    #if main_win_h > 2 and main_win_w > 2:
-    #    main_win = curses.newwin(main_win_h, main_win_w, 1, 1)
-    #    main_win.box() # Draw a border around the new window
-    #else:
-        # If the screen is too small, we'll draw directly on stdscr as a fallback
-    #    main_win = stdscr
-
-    if not full_redraw:
-        try:
-            if width > 0: stdscr.addstr(0, 0, " " * width)
-            stdscr.addstr(0, 0, t('ui_clock', now_time_str=now_time_str), curses.color_pair(COLOR_PAIR_DEFAULT))
-            if display_right_panel and all_displayable_tickets:
-                if 0 < effective_main_width < width:
-                    try: stdscr.addstr(0, effective_main_width, separator_char)
-                    except curses.error: pass
-                if all_displayable_tickets:
-                    ticket_name_line0 = all_displayable_tickets[0]
-                    attr_line0 = curses.color_pair(COLOR_PAIR_DEFAULT)
-                    if data.get("current_ticket") == ticket_name_line0:
-                        attr_line0 = curses.color_pair(COLOR_PAIR_SELECTED) | curses.A_BOLD
-                    elif data.get("focused_ticket") == ticket_name_line0:
-                        attr_line0 = curses.color_pair(COLOR_PAIR_FOCUSED)
-                    else:
-
-                        #permanent_notifications_ref.remove(t('jira_login_prompt'))
-
-
-                        subtasks_for_ticket0 = data.get("sub_tasks", {}).get(ticket_name_line0, {})
-                        if any(st.get("pr_status") == 'attention_needed' for st in subtasks_for_ticket0.values() if isinstance(st, dict)):
-                            attr_line0 = curses.color_pair(COLOR_PAIR_PR_UNHANDLED)
-                            if f"{ticket_name_line0}: PR attention needed!" not in permanent_notifications: permanent_notifications.append(f"{ticket_name_line0}: PR attention needed!")
-                        elif any(st.get("pr_status") == 'approved' for st in subtasks_for_ticket0.values() if isinstance(st, dict)):
-                            attr_line0 = curses.color_pair(COLOR_PAIR_PR_APPROVED)
-                            if f"{ticket_name_line0}: PR approved. Please merge!" not in permanent_notifications: permanent_notifications.append(f"{ticket_name_line0}: PR approved. Please merge!")
-                        elif subtasks_for_ticket0 and all(st_details.get("status") == "hidden" for st_details in subtasks_for_ticket0.values() if isinstance(st_details, dict)):
-                            attr_line0 = curses.color_pair(COLOR_PAIR_TASK_ALL_SUBTASKS_HIDDEN)
-                        elif (subtasks_for_ticket0 and 
-                                not any(st_details.get("status") == "todo" for st_details in subtasks_for_ticket0.values() if isinstance(st_details, dict)) and
-                                not any(st_details.get("status") == "in_progress" for st_details in subtasks_for_ticket0.values() if isinstance(st_details, dict)) and 
-                                any(st_details.get("status") == "done" for st_details in subtasks_for_ticket0.values() if isinstance(st_details, dict))
-                        ):
-                            attr_line0 = curses.color_pair(COLOR_PAIR_TASK_ALL_SUBTASKS_DONE)
-                        elif not subtasks_for_ticket0:
-                            attr_line0 = curses.color_pair(COLOR_PAIR_TASK_ALL_SUBTASKS_DONE)
-
-                    full_text_line0 = f"1. {ticket_name_line0}"
-                    panel_text_start_x_calc = effective_main_width + len(separator_char)
-                    available_width_in_panel_line0 = max(0, width - panel_text_start_x_calc)
-                    text_to_draw_line0 = full_text_line0[:available_width_in_panel_line0]
-                    actual_draw_x_line0 = width - len(text_to_draw_line0)
-                    if actual_draw_x_line0 < panel_text_start_x_calc:
-                        actual_draw_x_line0 = panel_text_start_x_calc
-                        text_to_draw_line0 = text_to_draw_line0[:max(0,width - actual_draw_x_line0)]
-                    if len(text_to_draw_line0) > 0:
-                        try: stdscr.addstr(0, actual_draw_x_line0, text_to_draw_line0, attr_line0)
-                        except curses.error: pass
-            stdscr.addstr(height - 1, 0, " " * (width -1 if width > 0 else 0) )
-            stdscr.addstr(height - 1, 0, command_line_text.ljust(width-1 if width > 0 else 0), curses.color_pair(COLOR_PAIR_DEFAULT) | curses.A_BOLD)
-            curses.curs_set(1)
-            stdscr.move(height - 1, min(cursor_x, width - 1 if width > 0 else 0))
-            stdscr.refresh()
-        except curses.error: return False
-        return True
-
-    stdscr.clear()
-    stdscr.attron(curses.color_pair(COLOR_PAIR_DEFAULT))
-
-    if display_right_panel:
-        panel_text_start_col_abs = effective_main_width + len(separator_char)
-        max_rows_for_ticket_list_in_panel = height -1
-
-        for i, ticket_name_in_panel in enumerate(all_displayable_tickets):
-            if i >= max_rows_for_ticket_list_in_panel : break
-            if i >= height -1 : break
-
-            if 0 < effective_main_width < width:
-                try: stdscr.addstr(i, effective_main_width, separator_char)
-                except curses.error: pass
-
-            item_attr = curses.color_pair(COLOR_PAIR_DEFAULT)
-            if data.get("current_ticket") == ticket_name_in_panel:
-                item_attr = curses.color_pair(COLOR_PAIR_SELECTED) | curses.A_BOLD
-            elif data.get("focused_ticket") == ticket_name_in_panel:
-                item_attr = curses.color_pair(COLOR_PAIR_FOCUSED)
-            else:
-                subtasks_for_this_panel_ticket = data.get("sub_tasks", {}).get(ticket_name_in_panel, {})
-                cached_item = cache_copy.get(inc.helpers.get_jira_ticket_from_url(ticket_name_in_panel))
-
-                # Check for PR status for background color
-                if any(st.get("pr_status") == 'attention_needed' for st in subtasks_for_this_panel_ticket.values() if isinstance(st, dict)):
-                    item_attr = curses.color_pair(COLOR_PAIR_PR_UNHANDLED)
-                    if f"{ticket_name_in_panel}: PR attention needed!" not in permanent_notifications: permanent_notifications.append(f"{ticket_name_in_panel}: PR attention needed!")
-                elif any(st.get("pr_status") == 'approved' for st in subtasks_for_this_panel_ticket.values() if isinstance(st, dict)):
-                    item_attr = curses.color_pair(COLOR_PAIR_PR_APPROVED)
-                    if f"{ticket_name_in_panel}: PR approved. Please merge!" not in permanent_notifications: permanent_notifications.append(f"{ticket_name_in_panel}: PR approved. Please merge!")
-                elif cached_item and (cached_item.get('new_jira_comment') or cached_item.get('new_trello_comment')):
-                    item_attr = curses.color_pair(COLOR_PAIR_NEW_COMMENT)
-                elif subtasks_for_this_panel_ticket and all(st_details.get("status") == "hidden" for st_details in subtasks_for_this_panel_ticket.values() if isinstance(st_details, dict)):
-                    item_attr = curses.color_pair(COLOR_PAIR_TASK_ALL_SUBTASKS_HIDDEN)
-                elif (subtasks_for_this_panel_ticket and 
-                        not any(st_details.get("status") == "todo" for st_details in subtasks_for_this_panel_ticket.values() if isinstance(st_details, dict)) and
-                        not any(st_details.get("status") == "in_progress" for st_details in subtasks_for_this_panel_ticket.values() if isinstance(st_details, dict)) and 
-                        any(st_details.get("status") == "done" for st_details in subtasks_for_this_panel_ticket.values() if isinstance(st_details, dict))
-                ):
-                    item_attr = curses.color_pair(COLOR_PAIR_TASK_ALL_SUBTASKS_DONE)
-                
-                elif not subtasks_for_this_panel_ticket:
-                    item_attr = curses.color_pair(COLOR_PAIR_TASK_ALL_SUBTASKS_DONE)
-
-
-            full_text_for_line = f"{i+1}. {ticket_name_in_panel}"
-            current_panel_content_width = actual_panel_content_width if actual_panel_content_width > 0 else 1
-            text_to_draw = full_text_for_line[:current_panel_content_width]
-            actual_draw_x = width - len(text_to_draw)
-            if actual_draw_x < panel_text_start_col_abs:
-                actual_draw_x = panel_text_start_col_abs
-                text_to_draw = text_to_draw[:max(0,width - actual_draw_x)]
-
-            if len(text_to_draw) > 0:
-                try: stdscr.addstr(i, actual_draw_x, text_to_draw, item_attr)
-                except curses.error: pass
-
-    row = 0
-    if effective_main_width > 0 :
-        stdscr.addstr(row, 0, t('ui_clock', now_time_str=now_time_str)[:effective_main_width])
-    row += 1
-
-    content_height_val = height - (row + 1) - footer_total_height # +1 for the separator
-    if content_height_val < 0: content_height_val = 0
-    content_height_obj = [content_height_val]
-
-    focused_ticket = data.get("focused_ticket")
-    focused_subtask = data.get("focused_subtask")
-    if focused_ticket:
-        if effective_main_width > 0:
-            focus_text = t('ui_focused_task_prefix', name=focused_ticket)
-            if focused_subtask:
-                focus_text += f" / {focused_subtask}"
-            lines_used = _draw_wrapped_text(stdscr, focus_text, row, 0, effective_main_width, effective_main_width, content_height_obj, attr=curses.color_pair(COLOR_PAIR_FOCUSED) | curses.A_BOLD)
-            row += lines_used
-
-    if web_change_notifications:
-        if effective_main_width > 0:
-            header_text = t('ui_web_changes_header')
-            lines_used = _draw_wrapped_text(stdscr, header_text, row, 0, effective_main_width, effective_main_width, content_height_obj, attr=curses.color_pair(COLOR_PAIR_URGENT_BOX))
-            row += lines_used
-        for i, notification in enumerate(web_change_notifications):
-            if content_height_obj[0] <= 0: break
-            lines_used = _draw_wrapped_text(stdscr, f"{i+1}. {notification}", row, 0, effective_main_width, effective_main_width, content_height_obj, prefix="", attr=curses.color_pair(COLOR_PAIR_URGENT_BOX))
-            row += lines_used
-
-    with reviews_lock:
-        if pull_requests_for_review:
-            if effective_main_width > 0:
-                header_text = t('ui_reviews_header')
-                lines_used = _draw_wrapped_text(stdscr, header_text, row, 0, effective_main_width, effective_main_width, content_height_obj, attr=curses.color_pair(COLOR_PAIR_URGENT_BOX))
-                row += lines_used
-            for pr in pull_requests_for_review:
-                if content_height_obj[0] <= 0: break
-                repo_name = f"{pr['toRef']['repository']['project']['key']}/{pr['toRef']['repository']['name']}"
-                line1 = f" ** {pr['title']} ** "
-                lines_used = _draw_wrapped_text(stdscr, line1, row, 0, effective_main_width, effective_main_width, content_height_obj, prefix="", attr=curses.color_pair(COLOR_PAIR_URGENT_BOX))
-                row += lines_used
-                if content_height_obj[0] <= 0: break
-                line2 = f" {pr['links']['self'][0]['href']}"
-                lines_used = _draw_wrapped_text(stdscr, line2, row, 0, effective_main_width, effective_main_width, content_height_obj, prefix="", attr=curses.color_pair(COLOR_PAIR_URGENT_BOX))
-                row += lines_used
-
-    jira_box_lines = read_jira_box_content(max_lines=10)
-    if jira_box_lines:
-        for line in jira_box_lines:
-            if content_height_obj[0] <= 0: break
-            lines_used = _draw_wrapped_text(stdscr, line, row, 0, effective_main_width, effective_main_width, content_height_obj, attr=curses.color_pair(COLOR_PAIR_URGENT_BOX))
-            row += lines_used
-
-    if pull_requests_for_review or jira_box_lines or web_change_notifications:
-        if effective_main_width > 0:
-            lines_used = _draw_wrapped_text(stdscr, "---", row, 0, effective_main_width, effective_main_width, content_height_obj)
-            row += lines_used
-
-    initial_content_start_row = row
-    if effective_main_width > 0:
-        stdscr.addstr(row, 0, "-" * effective_main_width)
-        initial_content_start_row +=1
-    row = initial_content_start_row
-
-    content_height_obj = [height - initial_content_start_row - footer_total_height]
-    current_ticket = data.get("current_ticket")
-
-    if current_ticket:
-        paused_count = len(data.get('paused_tasks', []))
-        paused_info = f" {t('ui_paused_tasks', count=paused_count)}" if paused_count > 0 else ""
-        base_text = t('ui_current_task_prefix')
-        if content_height_obj[0] > 0 and effective_main_width > 0:
-            available_width_for_ticket_name = effective_main_width - len(base_text) - len(paused_info) -1
-            if available_width_for_ticket_name < 0: available_width_for_ticket_name = 0
-            ticket_display_name = current_ticket[:available_width_for_ticket_name]
-            full_ticket_line = f"{base_text}{ticket_display_name}{paused_info}"
-            stdscr.addstr(row, 0, full_ticket_line[:effective_main_width])
-            row += 1; content_height_obj[0] -= 1
-
-        subtask_list_to_use = current_ticket_subtask_list_for_display_arg
-        if subtask_list_to_use is None:
-            subtasks_dict = data.get("sub_tasks", {}).get(current_ticket, {})
-            show_hidden = data.get("show_hidden_tasks", False)
-            # Filter out hidden subtasks for display
-            subtask_list_to_use = [(name, details) for name, details in subtasks_dict.items() if isinstance(details, dict) and (show_hidden or not details.get("status") == "hidden")]
-
-
-        if subtask_list_to_use:
-            if content_height_obj[0] > 0 and effective_main_width > 2:
-                stdscr.addstr(row, 2, t('ui_subtasks_header')[:effective_main_width-2])
-                row += 1; content_height_obj[0] -= 1
-
-            for i, (sub_task_name, sub_task_details_obj) in enumerate(subtask_list_to_use):
-                if content_height_obj[0] <= 0: break
-                if effective_main_width <= 4: break
-
-                jira_ticket_id = inc.helpers.get_jira_ticket_from_url(sub_task_name)
-                cached_item = cache_copy.get(jira_ticket_id)
-                status = sub_task_details_obj.get("status", "todo")
-                status_char = ""
-                if status == "focused":
-                    status_char = "‼️"
-                elif status == "done":
-                    status_char = "✅"
-                elif status == "in_progress":
-                    status_char = "🚧"
-                elif status == "hidden":
-                    status_char = "🙈"
-                else:
-                    status_char = "[ ]"
-
-                display_text = jira_ticket_id
-                item_attr = curses.color_pair(COLOR_PAIR_DEFAULT)
-
-                if jira_ticket_id != sub_task_name:
-                    cached_item = cache_copy.get(jira_ticket_id)
-                    should_fetch = not cached_item or (now - cached_item.get('timestamp', 0)) > JIRA_CACHE_TIMEOUT
-
-                    if should_fetch and jira_ticket_id not in jira_in_flight:
-                        jira_in_flight.add(jira_ticket_id)
-                        jira_request_queue.put(jira_ticket_id)
-
-                    if cached_item:
-                        status = cached_item.get('data', {}).get('fields', {}).get('status', {}).get('name', 'N/A')
-                        display_text += f" [{status}]"
-
-                pr_status = sub_task_details_obj.get("pr_status")
-                if pr_status == 'attention_needed':
-                    item_attr = curses.color_pair(COLOR_PAIR_PR_UNHANDLED)
-
-                elif pr_status == 'approved':
-                    item_attr = curses.color_pair(COLOR_PAIR_PR_APPROVED)
-
-                elif cached_item and (cached_item.get('new_jira_comment') or cached_item.get('new_trello_comment')):
-                    item_attr = curses.color_pair(COLOR_PAIR_NEW_COMMENT)
-
-                if i == selected_subtask_idx:
-                    item_attr = curses.color_pair(COLOR_PAIR_SELECTED)
-
-                prefix = ">" if i == selected_subtask_idx else ""
-                full_prefix = f"{prefix}{' ' if prefix else ''}{i+1}. {status_char} "
-
-                start_col = 2
-                max_text_width_for_line = effective_main_width - start_col - len(full_prefix)
-                if max_text_width_for_line < 0 : max_text_width_for_line = 0
-
-                lines_used = _draw_wrapped_text(stdscr, display_text, row, start_col,
-                                                max_text_width_for_line, effective_main_width, content_height_obj,
-                                                prefix=full_prefix,
-                                                subsequent_indent_offset=len(prefix) + len(f" {i+1}. {status_char} "),
-                                                attr=item_attr)
-                row += lines_used
-
-
-        elif content_height_obj[0] > 0 and effective_main_width > 2 and current_ticket:
-            stdscr.addstr(row, 2, t('ui_no_subtasks')[:effective_main_width-2])
-            row += 1; content_height_obj[0] -= 1
-
-        notes_to_show_preview = []
-        task_info_to_show = []
-        notes_title_preview = ""
-        jira_comments = []
-        trello_data = []
-        trello_link = ""
-
-        if selected_subtask_idx != -1 and 0 <= selected_subtask_idx < len(subtask_list_to_use):
-            sel_sub_name, sel_sub_details = subtask_list_to_use[selected_subtask_idx]
-            sel_sub_name = inc.helpers.get_jira_ticket_from_url(sel_sub_name)
-            sub_task_with_desc = sel_sub_name
-            notes_to_show_preview = sel_sub_details.get("notes", []).copy()
-
-            if sel_sub_details.get("pr_url"):
-                task_info_to_show.insert(0, f"PR: {sel_sub_details.get('pr_url')}")
-
-            pr_details = sel_sub_details.get("pr_details", {})
-            if pr_details:
-                # Draw overall status
-                status_text = pr_details.get('status_text', 'waiting')
-                #task_info_to_show.insert(1, f"PR Status: {status_text}")
-
-                # Draw approvers with emojis
-                approvers_str = "PR " + status_text + ": " + ", ".join(pr_details.get('approvers_formatted', []))
-                task_info_to_show.insert(1, approvers_str)
-
-
-            cached_item = cache_copy.get(sel_sub_name, {})
-            
-
-            if cached_item:
-                status = cached_item.get('data', {}).get('fields', {}).get('status', {}).get('name', 'N/A')
-                status_icon = status
-                if status == "Done":
-                    status_icon = "✅"
-                elif status == "In Progress":
-                    status_icon = "🚧"
-                elif status == "In Review":
-                    status_icon = "👀"
-                elif status == "To Do":
-                    status_icon = "📌"
-                elif status == "Backlog":
-                    status_icon = "🗂️"
-
-                
-
-
-                vf_link = next((l.get("object",{}).get("url") for l in cached_item.get('remotelinks',[]) if l.get("globalId") == "VF - Log Hours"), "N/A")
-                task_info_to_show.insert(0, f"VF: {vf_link}")
-
-                jira_description = cached_item.get('data', {}).get('fields', {}).get('description', "")
-                
-                if (jira_description and isinstance(jira_description, str)):
-                    # API v2 way, no objects
-                    pattern = r"(https://trello\.com/c/[^]]+)"
-                    match = re.search(pattern, jira_description)
-                    if match:
-                        trello_link = match.group(0)
-
-                        task_info_to_show.insert(0, f"Trello: {trello_link}")
-
-                jira_link = f"{inc.config_manager.config.get('JIRA_URL')}/browse/{sel_sub_name}"
-                task_info_to_show.insert(0, f"{status_icon} {jira_link}")
-
-                summary = cached_item.get('data', {}).get('fields', {}).get('summary', {})
-                jira_comments = list(reversed(cached_item.get('data', {}).get('fields', {}).get('comment', {}).get('comments', {})))
-                trello_data = cached_item.get('trello_data', {})
-
-                sub_task_with_desc = f"{sel_sub_name} {summary}"
-
-            notes_title_preview = t('ui_subtask_notes_header', subtask=sub_task_with_desc)
-
-        elif current_ticket:
-            notes_title_preview = t('ui_main_task_notes_header', task=current_ticket)
-            notes_to_show_preview = data.get("notes", {}).get(current_ticket, [])
-
-        if notes_title_preview and content_height_obj[0] > 0 and effective_main_width > 2:
-            row += 1
-            stdscr.addstr(row, 2, notes_title_preview[:effective_main_width-2])
-            row += 1; content_height_obj[0] -= 1
-            if not notes_to_show_preview and content_height_obj[0] > 0 :
-                stdscr.addstr(row, 4, t('ui_no_notes')[:effective_main_width-4])
-                row += 1; content_height_obj[0] -=1
-
-
-        if len(task_info_to_show):
-            lines_used_note = _draw_wrapped_text(stdscr, "┌─────INFO─── ─── ── ── ─ ─  ─   ─", row, 4,
-                effective_main_width, effective_main_width, content_height_obj,
-                prefix="", subsequent_indent_offset=0,
-                attr=curses.color_pair(COLOR_PAIR_PAUSED))
-            row += lines_used_note
-
-        for note_idx, note in enumerate(task_info_to_show[:10]):
-            if content_height_obj[0] <= 0 : break
-            if effective_main_width <= 4: break
-
-            prefix_note = f"| "
-            start_col_note = 4
-            max_text_width_note = effective_main_width - start_col_note - len(prefix_note)
-            if max_text_width_note < 0 : max_text_width_note = 0
-            lines_used_note = _draw_wrapped_text(stdscr, note, row, start_col_note,
-                                            max_text_width_note, effective_main_width, content_height_obj,
-                                            prefix=prefix_note, subsequent_indent_offset=len(prefix_note),
-                                            attr=curses.color_pair(COLOR_PAIR_PAUSED))
-            row += lines_used_note
-
-        notes_with_unhandled = [n for n in notes_to_show_preview if n.startswith("*PR* ")]
-        for note_idx, note in enumerate(notes_with_unhandled[:10]):
-            if content_height_obj[0] <= 0 : break
-            if effective_main_width <= 4: break
-
-            prefix_note = f"| "
-            start_col_note = 4
-            max_text_width_note = effective_main_width - start_col_note - len(prefix_note)
-            if max_text_width_note < 0 : max_text_width_note = 0
-            lines_used_note = _draw_wrapped_text(stdscr, note, row, start_col_note,
-                                            max_text_width_note, effective_main_width, content_height_obj,
-                                            prefix=prefix_note, subsequent_indent_offset=len(prefix_note),
-                                            attr=curses.color_pair(COLOR_PAIR_PAUSED))
-            row += lines_used_note
-
-
-        if len(task_info_to_show):
-            lines_used_note = _draw_wrapped_text(stdscr, "└──────────── ─── ── ── ─ ─  ─   ─", row, 4,
-                effective_main_width, effective_main_width, content_height_obj,
-                prefix="", subsequent_indent_offset=0,
-                attr=curses.color_pair(COLOR_PAIR_PAUSED))
-            row += lines_used_note
-
-
-        # 1. Load the JSON string into a Python dictionary
-        #trello_data = json.loads(trello_data_string)
-
-        # 2. Create an empty list to hold the formatted comments
-        trello_comments = []
-
-        # 3. Loop through each action in the 'actions' list
-        if trello_data and len(trello_data):
-            for action in trello_data['actions']:
-                # We only want actions that are comments
-                if action['type'] == 'commentCard':
-                    # Parse the date string into a datetime object
-                    # The 'Z' at the end means UTC, which we replace for Python's parser
-                    date_obj = datetime.fromisoformat(action['date'].replace('Z', '+00:00'))
-
-                    # Format the date into a more readable string (e.g., 07.08.2025 12:40)
-                    formatted_date = date_obj.strftime('%d.%m %H:%M')
-
-                    # Create a dictionary for the comment and add it to our list
-                    trello_comments.append({
-                        'comment_text': action['data']['text'],
-                        'creator_name': action['memberCreator']['fullName'],
-                        'date': formatted_date
-                    })
-
-        # 4. Print the final array beautifully ✨
-        #print(json.dumps(trello_comments, indent=4, ensure_ascii=False))
-
-        if len(trello_comments):
-            lines_used_note = _draw_wrapped_text(stdscr, "┌─────TRELLO─ ─── ── ── ─ ─  ─   ─", row, 4,
-                effective_main_width, effective_main_width, content_height_obj,
-                prefix="", subsequent_indent_offset=0,
-                attr=curses.color_pair(COLOR_PAIR_GREY))
-            row += lines_used_note
-
-        for note_idx, note in enumerate(trello_comments[:5]):
-            note_body = note.get("comment_text", "")
-            note_from = note.get("creator_name", "")
-            comment_date = note.get("date", "")
-            note_body = note_body.replace("\n", " ")
-            note_body = note_from + ": " + note_body
-            if content_height_obj[0] <= 0 : break
-            if effective_main_width <= 4: break
-            prefix_note = f"| "
-            start_col_note = 4
-            max_text_width_note = effective_main_width - start_col_note - len(prefix_note)
-
-            note_body = comment_date + ": " + note_body[0:max_text_width_note - 17] + "..."
-
-            if max_text_width_note < 0 : max_text_width_note = 0
-            lines_used_note = _draw_wrapped_text(stdscr, note_body, row, start_col_note,
-                                            max_text_width_note, effective_main_width, content_height_obj,
-                                            prefix=prefix_note, subsequent_indent_offset=len(prefix_note),
-                                            attr=curses.color_pair(COLOR_PAIR_GREY))
-            row += lines_used_note
-
-        if len(trello_comments):
-            lines_used_note = _draw_wrapped_text(stdscr, "└──────────── ─── ── ── ─ ─  ─   ─", row, 4,
-                effective_main_width, effective_main_width, content_height_obj,
-                prefix="", subsequent_indent_offset=0,
-                attr=curses.color_pair(COLOR_PAIR_GREY))
-            row += lines_used_note
-
-
-        if len(jira_comments):
-            lines_used_note = _draw_wrapped_text(stdscr, "┌─────JIRA─── ─── ── ── ─ ─  ─   ─", row, 4,
-                effective_main_width, effective_main_width, content_height_obj,
-                prefix="", subsequent_indent_offset=0,
-                attr=curses.color_pair(COLOR_PAIR_STANDOUT))
-            row += lines_used_note
-        for note_idx, note in enumerate(jira_comments[:5]):
-            note_body = note.get("body", "")
-            comment_date = note.get("updated", "")
-            comment_date = comment_date[:-2] + ':' + comment_date[-2:]
-            dt = datetime.fromisoformat(comment_date) 
-
-            note_body = re.sub(r'\[~.*?\]', 'USER', note_body)
-            note_body = note_body.replace("\n", " ")
-            
-            if content_height_obj[0] <= 0 : break
-            if effective_main_width <= 4: break
-            prefix_note = f"| "
-            start_col_note = 4
-            max_text_width_note = effective_main_width - start_col_note - len(prefix_note)
-
-            note_body = dt.strftime('%d.%m. %H:%M') + ": " + note_body[0:max_text_width_note - 17] + "..."
-
-            if max_text_width_note < 0 : max_text_width_note = 0
-            lines_used_note = _draw_wrapped_text(stdscr, note_body, row, start_col_note,
-                                            max_text_width_note, effective_main_width, content_height_obj,
-                                            prefix=prefix_note, subsequent_indent_offset=len(prefix_note),
-                                            attr=curses.color_pair(COLOR_PAIR_STANDOUT))
-            row += lines_used_note
-        if len(jira_comments):
-            lines_used_note = _draw_wrapped_text(stdscr, "└──────────── ─── ── ── ─ ─  ─   ─", row, 4,
-                effective_main_width, effective_main_width, content_height_obj,
-                prefix="", subsequent_indent_offset=0,
-                attr=curses.color_pair(COLOR_PAIR_STANDOUT))
-            row += lines_used_note
-
-
-        notes_without_unhandled = [n for n in notes_to_show_preview if not n.startswith("*PR* ")]
-
-        for note_idx, note in enumerate(notes_without_unhandled[:10]):
-            if content_height_obj[0] <= 0 : break
-            if effective_main_width <= 4: break
-            prefix_note = f"- "
-            start_col_note = 4
-            max_text_width_note = effective_main_width - start_col_note - len(prefix_note)
-            if max_text_width_note < 0 : max_text_width_note = 0
-            lines_used_note = _draw_wrapped_text(stdscr, note, row, start_col_note,
-                                            max_text_width_note, effective_main_width, content_height_obj,
-                                            prefix=prefix_note, subsequent_indent_offset=len(prefix_note))
-            row += lines_used_note
-
-        if len(notes_without_unhandled) > 10 and content_height_obj[0] > 0 and effective_main_width > 7:
-            stdscr.addstr(row, 4, t('ui_more_notes')[:effective_main_width-4])
-            row+=1; content_height_obj[0]-=1
-
-    else:
-        paused_count = len(data.get('paused_tasks', []))
-        if paused_count > 0:
-            full_no_task_line = t('ui_no_active_task_paused', count=paused_count)
-        else:
-            full_no_task_line = t('ui_no_active_task')
-
-        if content_height_obj[0] > 0 and effective_main_width > 0:
-            stdscr.addstr(row, 0, full_no_task_line[:effective_main_width],
-                          curses.color_pair(COLOR_PAIR_PAUSED) if paused_count > 0 else curses.color_pair(COLOR_PAIR_DEFAULT) )
-            row += 1; content_height_obj[0] -= 1
-
-    if content_height_obj[0] > 0 and effective_main_width > 0: row += 1; content_height_obj[0] -= 1
-
-    def _is_valid_past_event_today(event_item, now_for_display, today_start_dt):
-        try:
-            dt_str = event_item.get('datetime');
-            if not isinstance(dt_str, str): return False
-            dt = datetime.fromisoformat(dt_str)
-            return today_start_dt <= dt < now_for_display
-        except (ValueError, TypeError): return False
-
-    def get_next_occurrence(recurring_event, now):
-        try:
-            target_weekday = recurring_event['weekday']
-            event_time_str = recurring_event['time']
-            if len(event_time_str.split(':')) != 2: return None
-            event_time_obj = datetime.strptime(event_time_str, "%H:%M").time()
-            today_weekday = now.weekday()
-            days_ahead = target_weekday - today_weekday
-            if days_ahead < 0: days_ahead += 7
-            elif days_ahead == 0 and now.time() >= event_time_obj: days_ahead += 7
-            next_occurrence_date = (now + timedelta(days=days_ahead)).date()
-            return datetime.combine(next_occurrence_date, event_time_obj)
-        except (ValueError, KeyError, TypeError): return None
-
-    todays_upcoming_events = []
-    now_dt_display = datetime.now()
-
-    with external_meetings_lock:
-        current_external_meetings = copy.deepcopy(external_meetings)
-
-    for m in current_external_meetings:
-        try:
-            time_obj = datetime.strptime(m['start_time'], "%H:%M").time()
-            dt = datetime.combine(date.today(), time_obj)
-            if dt.date() == now_dt_display.date() and dt >= now_dt_display:
-                todays_upcoming_events.append({'dt': dt, 'details': m, 'type': 'external_meeting', 'recurring': False})
-        except (ValueError, KeyError):
-            continue
-
-    for m in data.get("meetings", []):
-        try:
-            dt = datetime.fromisoformat(m['datetime'])
-            if dt.date() == now_dt_display.date() and dt >= now_dt_display:
-                todays_upcoming_events.append({'dt': dt, 'details': m.get('link', ''), 'type': 'meeting', 'recurring': False})
-        except (TypeError, ValueError): continue
-    for i_event_data in data.get("interruptions", []):
-        try:
-            dt = datetime.fromisoformat(i_event_data['datetime'])
-            if dt.date() == now_dt_display.date() and dt >= now_dt_display:
-                todays_upcoming_events.append({'dt': dt, 'details': i_event_data.get('message', ''), 'type': 'interruption', 'recurring': False})
-        except (TypeError, ValueError): continue
-    for rev in data.get("recurring_events", []):
-        next_dt = get_next_occurrence(rev, now_dt_display)
-        if next_dt and next_dt.date() == now_dt_display.date() and next_dt >= now_dt_display:
-            todays_upcoming_events.append({'dt': next_dt, 'details': rev.get('details', ''), 'type': rev.get('type'), 'recurring': True})
-    todays_upcoming_events.sort(key=lambda x: x['dt'])
-
-    if content_height_obj[0] > 0 and effective_main_width > 0:
-        stdscr.addstr(row, 0, t('ui_meetings_header')[:effective_main_width])
-        row += 1; content_height_obj[0] -= 1
-        meetings_shown_count = 0
-        for event in todays_upcoming_events:
-            if event.get('type') == 'meeting':
-                if content_height_obj[0] <= 0: break
-                link_details = event['details']
-                link_display = link_details
-                try:
-                    parsed_url = urlparse(link_details)
-                    if parsed_url.scheme and parsed_url.netloc and parsed_url.query:
-                        link_display = urlunparse(parsed_url._replace(query=''))
-                except ValueError: pass
-
-                text_content = f"{event['dt'].strftime('%H:%M')}: {link_display} ({format_timedelta_minutes(event['dt'] - now_dt)})"
-                if event['recurring']: text_content += f" ({t('recurring')})"
-                lines_used = _draw_wrapped_text(stdscr, text_content, row, 2, effective_main_width-2, effective_main_width, content_height_obj, prefix="- ")
-                row += lines_used; meetings_shown_count +=1
-            elif event.get('type') == 'external_meeting':
-                if content_height_obj[0] <= 0: break
-                m = event['details']
-                text_content = f"{m['start_time']}-{m['end_time']}: ({m['title']}) {m['url']} ({format_timedelta_minutes(event['dt'] - now_dt)})"
-                lines_used = _draw_wrapped_text(stdscr, text_content, row, 2, effective_main_width-2, effective_main_width, content_height_obj, prefix="- ")
-                row += lines_used; meetings_shown_count +=1
-
-        past_meetings_today = sorted([m for m in data.get("meetings", []) if _is_valid_past_event_today(m, now_dt_display, today_start)], key=lambda x: datetime.fromisoformat(x['datetime']))
-        if past_meetings_today and content_height_obj[0] > 0:
-            stdscr.addstr(row, 2, t('ui_meetings_past')[:effective_main_width-2], curses.color_pair(COLOR_PAIR_GREY))
-            row += 1; content_height_obj[0] -=1
-            for m_past in past_meetings_today:
-                if content_height_obj[0] <= 0: break
-                text_content = f"{datetime.fromisoformat(m_past['datetime']).strftime('%H:%M')}: {m_past.get('link','')} ({format_timedelta_minutes(now_dt - datetime.fromisoformat(m_past['datetime']))})"
-                lines_used = _draw_wrapped_text(stdscr, text_content, row, 4, effective_main_width-4, effective_main_width, content_height_obj, prefix="- ", attr=curses.color_pair(COLOR_PAIR_GREY))
-                row += lines_used; meetings_shown_count +=1
-        if meetings_shown_count == 0 and content_height_obj[0] > 0:
-             stdscr.addstr(row, 2, t('ui_no_meetings')[:effective_main_width-2]); row += 1
-
-    if content_height_obj[0] > 0: row += 1; content_height_obj[0] -=1
-
-    if content_height_obj[0] > 0 and effective_main_width > 0:
-        stdscr.addstr(row, 0, t('ui_other_events_header')[:effective_main_width])
-        row += 1; content_height_obj[0] -= 1
-        interruptions_shown_count = 0
-        for event in todays_upcoming_events:
-            if event.get('type') == 'interruption':
-                 if content_height_obj[0] <= 0: break
-                 text_content = f"{event['dt'].strftime('%H:%M')}: {event['details']} ({format_timedelta_minutes(event['dt'] - now_dt)})"
-                 if event['recurring']: text_content += f" ({t('recurring')})"
-                 lines_used = _draw_wrapped_text(stdscr, text_content, row, 2, effective_main_width-2, effective_main_width, content_height_obj, prefix="- ")
-                 row += lines_used; interruptions_shown_count +=1
-
-        past_interruptions_today = sorted([i for i in data.get("interruptions", []) if _is_valid_past_event_today(i, now_dt, today_start)], key=lambda x: datetime.fromisoformat(x['datetime']))
-        if past_interruptions_today and content_height_obj[0] > 0:
-            stdscr.addstr(row, 2, t('ui_meetings_past')[:effective_main_width-2], curses.color_pair(COLOR_PAIR_GREY))
-            row += 1; content_height_obj[0] -=1
-            for i_past in past_interruptions_today:
-                if content_height_obj[0] <= 0: break
-                text_content = f"{datetime.fromisoformat(i_past['datetime']).strftime('%H:%M')}: {i_past.get('message','')} ({format_timedelta_minutes(now_dt - datetime.fromisoformat(i_past['datetime']))})"
-                lines_used = _draw_wrapped_text(stdscr, text_content, row, 4, effective_main_width-4, effective_main_width, content_height_obj, prefix="- ", attr=curses.color_pair(COLOR_PAIR_GREY))
-                row += lines_used; interruptions_shown_count +=1
-        if interruptions_shown_count == 0 and content_height_obj[0] > 0:
-             stdscr.addstr(row, 2, t('ui_no_other_events')[:effective_main_width-2]); row += 1
-
-    help_section_start_y = height - 1 - 1 - num_actual_help_lines
-    max_desc_width_footer = effective_main_width
-    if help_section_start_y >= row and effective_main_width > 0 :
-        stdscr.attron(curses.color_pair(COLOR_PAIR_DEFAULT))
-        for i, line_text in enumerate(current_help_lines_list):
-            current_draw_y = help_section_start_y + i
-            if current_draw_y < height - 2:
-                indent = 2 if show_help_footer and i > 0 and not line_text.strip() == t('help_header') else 0
-                if line_text.strip() == t('help_header'): indent = 0
-                try:
-                    stdscr.addstr(current_draw_y, indent, line_text[:max(0, max_desc_width_footer - indent)])
-                except curses.error: pass
-            else: break
-        stdscr.attroff(curses.color_pair(COLOR_PAIR_DEFAULT))
-
-    try:
-        stdscr.addstr(height - 1, 0, " " * (width-1 if width > 0 else 0) )
-        stdscr.addstr(height - 1, 0, command_line_text.ljust(width-1 if width > 0 else 0), curses.color_pair(COLOR_PAIR_DEFAULT) | curses.A_BOLD)
-        curses.curs_set(1)
-        stdscr.move(height - 1, min(cursor_x, width - 1 if width > 0 else 0))
-    except curses.error: pass
-
-    try:
-        stdscr.attroff(curses.A_BOLD)
-        for i in range(1, 11):
-            stdscr.attroff(curses.color_pair(i))
-    except curses.error: pass
-    stdscr.refresh()
-    return True
-
+    elif current_view_mode == VIEW_TIME_LOG:
+        from inc.views.time_log_view import display_time_log_view
+        return display_time_log_view(stdscr, data, current_date_for_daily_notes_arg)
+    elif current_view_mode == VIEW_HOURLY_CHECKIN:
+        from inc.views.hourly_checkin_view import display_hourly_checkin_view
+        return display_hourly_checkin_view(stdscr, data, selected_note_idx)  # reusing selected_note_idx as selected_task_index
+    
+    # Default to main view rendering
+    from inc.views.main_view import display_main_view
+    return display_main_view(stdscr, data, command_buffer, full_redraw, selected_subtask_idx, 
+                            current_view_mode, entity_for_dedicated_notes, 
+                            current_ticket_subtask_list_for_display_arg, show_help_footer, 
+                            current_date_for_daily_notes_arg, selected_note_idx, 
+                            jira_cache, jira_cache_lock, reviews_lock, external_meetings_lock, notes_scroll_offset,
+                            pull_requests_for_review, permanent_notifications, web_change_notifications, external_meetings)
+ 
 
 def show_notification(stdscr, message):
     try:
@@ -1916,6 +1158,22 @@ def handle_input(data, command_parts, stdscr, current_view_mode, selected_subtas
             sub_task_name, sub_task_details = current_ticket_subtask_list[selected_subtask_idx]
             current_status = sub_task_details.get("status", "todo")
 
+            # Log time for previously focused subtask if work session is active
+            work_session = data.get("work_session", {})
+            if work_session.get("active") and not work_session.get("paused"):
+                prev_focused = data.get("focused_subtask")
+                if prev_focused and work_session.get("current_timer_start_ts"):
+                    elapsed_seconds = int(datetime.now().timestamp() - work_session["current_timer_start_ts"])
+                    if elapsed_seconds > 0:
+                        today_str = date.today().isoformat()
+                        time_entry = {
+                            "type": "task",
+                            "subtask": prev_focused,
+                            "seconds": elapsed_seconds,
+                            "timestamp": datetime.now().isoformat()
+                        }
+                        data.setdefault("time_log", {}).setdefault(today_str, []).append(time_entry)
+            
             # Unfocus all other subtasks in the current ticket
             for st_name, st_details in data["sub_tasks"][current_ticket_name_val].items():
                 if st_details.get("status") == "focused":
@@ -1925,11 +1183,18 @@ def handle_input(data, command_parts, stdscr, current_view_mode, selected_subtas
                 data["sub_tasks"][current_ticket_name_val][sub_task_name]["status"] = "todo"
                 data["focused_ticket"] = None
                 data["focused_subtask"] = None
+                # Clear timer when unfocusing
+                if work_session.get("active"):
+                    work_session.pop("current_timer_start_ts", None)
                 show_notification(stdscr, t('cmd_info_focus_cleared'))
             else:
                 data["sub_tasks"][current_ticket_name_val][sub_task_name]["status"] = "focused"
                 data["focused_ticket"] = current_ticket_name_val
                 data["focused_subtask"] = sub_task_name
+                # Start timer when focusing if work session is active
+                if work_session.get("active") and not work_session.get("paused"):
+                    work_session["current_timer_start_ts"] = datetime.now().timestamp()
+                    work_session["last_activity_ts"] = datetime.now().timestamp()
                 show_notification(stdscr, t('cmd_info_subtask_focus_set', name=sub_task_name))
 
             data_was_modified = True
@@ -1971,6 +1236,22 @@ def handle_input(data, command_parts, stdscr, current_view_mode, selected_subtas
                         return "NO_CHANGE"
 
             if target_ticket:
+                # Log time for previously focused subtask if work session is active
+                work_session = data.get("work_session", {})
+                if work_session.get("active") and not work_session.get("paused"):
+                    prev_focused = data.get("focused_subtask")
+                    if prev_focused and work_session.get("current_timer_start_ts"):
+                        elapsed_seconds = int(datetime.now().timestamp() - work_session["current_timer_start_ts"])
+                        if elapsed_seconds > 0:
+                            today_str = date.today().isoformat()
+                            time_entry = {
+                                "type": "task",
+                                "subtask": prev_focused,
+                                "seconds": elapsed_seconds,
+                                "timestamp": datetime.now().isoformat()
+                            }
+                            data.setdefault("time_log", {}).setdefault(today_str, []).append(time_entry)
+                
                 # Clear all previous focuses
                 data["focused_ticket"] = None
                 data["focused_subtask"] = None
@@ -1984,6 +1265,14 @@ def handle_input(data, command_parts, stdscr, current_view_mode, selected_subtas
                 if target_subtask:
                     data["sub_tasks"][target_ticket][target_subtask]["status"] = "focused"
                     data["focused_subtask"] = target_subtask
+                    # Start timer for new subtask if work session is active
+                    if work_session.get("active") and not work_session.get("paused"):
+                        work_session["current_timer_start_ts"] = datetime.now().timestamp()
+                        work_session["last_activity_ts"] = datetime.now().timestamp()
+                else:
+                    # Clear timer when focusing on ticket without subtask
+                    if work_session.get("active"):
+                        work_session.pop("current_timer_start_ts", None)
 
                 data_was_modified = True
                 show_notification(stdscr, t('cmd_info_focus_set', name=target_ticket))
@@ -2053,6 +1342,111 @@ def handle_input(data, command_parts, stdscr, current_view_mode, selected_subtas
                 data_was_modified = True
                 show_notification(stdscr, t('cmd_info_event_added', type=event_type, datetime=event_datetime.strftime('%Y-%m-%d %H:%M')))
             except ValueError: show_notification(stdscr, t('cmd_err_invalid_time', time=time_str))
+
+    elif command == 'startday':
+        work_session = data.setdefault("work_session", {})
+        if work_session.get("active"):
+            show_notification(stdscr, t('work_session_already_active'))
+        else:
+            work_session["active"] = True
+            work_session["start_time"] = datetime.now().isoformat()
+            work_session["current_timer_start_ts"] = datetime.now().timestamp()
+            work_session["last_activity_ts"] = datetime.now().timestamp()
+            data_was_modified = True
+            show_notification(stdscr, t('work_session_started'))
+    
+    elif command == 'endday':
+        work_session = data.get("work_session", {})
+        if not work_session.get("active"):
+            show_notification(stdscr, t('work_session_not_active'))
+        else:
+            # Log any remaining time if there's an active timer
+            if work_session.get("current_timer_start_ts") and data.get("focused_subtask"):
+                elapsed_seconds = int(datetime.now().timestamp() - work_session["current_timer_start_ts"])
+                if elapsed_seconds > 0:
+                    today_str = date.today().isoformat()
+                    time_entry = {
+                        "type": "task",
+                        "subtask": data["focused_subtask"],
+                        "seconds": elapsed_seconds,
+                        "timestamp": datetime.now().isoformat()
+                    }
+                    data.setdefault("time_log", {}).setdefault(today_str, []).append(time_entry)
+            
+            work_session["active"] = False
+            work_session["end_time"] = datetime.now().isoformat()
+            work_session.pop("current_timer_start_ts", None)
+            data_was_modified = True
+            show_notification(stdscr, t('work_session_ended'))
+    
+    elif command == 'pause':
+        work_session = data.get("work_session", {})
+        if not work_session.get("active"):
+            show_notification(stdscr, t('work_session_not_active'))
+        elif work_session.get("paused"):
+            show_notification(stdscr, t('work_session_already_paused'))
+        else:
+            # Log current timer if running
+            if work_session.get("current_timer_start_ts") and data.get("focused_subtask"):
+                elapsed_seconds = int(datetime.now().timestamp() - work_session["current_timer_start_ts"])
+                if elapsed_seconds > 0:
+                    today_str = date.today().isoformat()
+                    time_entry = {
+                        "type": "task",
+                        "subtask": data["focused_subtask"],
+                        "seconds": elapsed_seconds,
+                        "timestamp": datetime.now().isoformat()
+                    }
+                    data.setdefault("time_log", {}).setdefault(today_str, []).append(time_entry)
+            
+            work_session["paused"] = True
+            work_session["pause_time"] = datetime.now().isoformat()
+            work_session.pop("current_timer_start_ts", None)
+            data_was_modified = True
+            show_notification(stdscr, t('work_session_paused'))
+    
+    elif command == 'resume':
+        work_session = data.get("work_session", {})
+        if not work_session.get("active"):
+            show_notification(stdscr, t('work_session_not_active'))
+        elif not work_session.get("paused"):
+            show_notification(stdscr, t('work_session_not_paused'))
+        else:
+            work_session["paused"] = False
+            work_session["resume_time"] = datetime.now().isoformat()
+            work_session["current_timer_start_ts"] = datetime.now().timestamp()
+            work_session["last_activity_ts"] = datetime.now().timestamp()
+            data_was_modified = True
+            show_notification(stdscr, t('work_session_resumed'))
+    
+    elif command == 'timelog' or command == 'log':
+        return "VIEW_TIME_LOG"
+    
+    elif command == 'logtime':
+        if len(command_parts) >= 3:
+            try:
+                # logtime <subtask> <minutes> [date]
+                subtask_name = command_parts[1]
+                minutes = int(command_parts[2])
+                target_date = date.today().isoformat()
+                
+                if len(command_parts) >= 4:
+                    # Parse date if provided (YYYY-MM-DD format)
+                    target_date = command_parts[3]
+                    date.fromisoformat(target_date)  # Validate date format
+                
+                # Convert minutes to seconds
+                seconds = minutes * 60
+                
+                # Add the time entry
+                from inc.time_tracker import add_time_entry
+                add_time_entry(data, entry_type="task", subtask=subtask_name, seconds=seconds, entry_date_iso=target_date)
+                data_was_modified = True
+                show_notification(stdscr, f"Logged {minutes} minutes for {subtask_name}")
+            except ValueError as e:
+                show_notification(stdscr, f"Invalid time or date format: {str(e)}")
+        else:
+            show_notification(stdscr, "Usage: logtime <subtask> <minutes> [YYYY-MM-DD]")
 
     elif command == 'q':
         return None
@@ -2572,9 +1966,15 @@ def main(stdscr):
     entity_for_dedicated_notes = None
     show_help_footer = False
     current_date_for_daily_notes = date.today()
+    selected_checkin_task_index = -1
     
     # Scroll offset for notes views (tracks how much content has been scrolled up)
     notes_scroll_offset = 0
+    
+    # Initialize time tracking scheduler
+    from inc.time_tracker import HourlyCheckinScheduler, note_user_activity
+    time_scheduler = HourlyCheckinScheduler(app_data, inc.config_manager.config, data_lock)
+    time_scheduler.start()
 
     pr_polling_thread = threading.Thread(target=poll_pull_requests, args=(data_lock, app_data), daemon=True)
     pr_polling_thread.start()
@@ -2615,6 +2015,13 @@ def main(stdscr):
 
         with data_lock:
             ticket_name_at_loop_start = app_data.get("current_ticket")
+            
+            # Check for pending hourly check-in
+            if app_data.get("pending_checkin") and current_view == VIEW_MAIN:
+                current_view = VIEW_HOURLY_CHECKIN
+                selected_checkin_task_index = -1  # Reset selection
+                command_buffer = ""
+                request_full_redraw = True
 
             completed_tickets = app_data.get("completed_tickets", [])
             current_ticket_subtasks_unfiltered = app_data.get("sub_tasks", {}).get(ticket_name_at_loop_start, {}) if ticket_name_at_loop_start else {}
@@ -2660,6 +2067,10 @@ def main(stdscr):
             last_content_refresh_time = current_time
             last_clock_refresh_time = current_time
             user_activity_caused_draw_this_cycle = True
+            
+            # Note user activity for time tracking
+            with data_lock:
+                note_user_activity(app_data)
 
             if key == curses.KEY_BTAB:
                 if current_view == VIEW_MAIN:
@@ -2674,15 +2085,23 @@ def main(stdscr):
                         current_view = VIEW_DEDICATED_NOTES
                     if current_view == VIEW_DEDICATED_NOTES:
                         command_buffer = ""; request_full_redraw = True; selected_note_index = -1; notes_scroll_offset = 0
-                elif current_view in [VIEW_DEDICATED_NOTES, VIEW_DAILY_NOTES]:
+                elif current_view in [VIEW_DEDICATED_NOTES, VIEW_DAILY_NOTES, VIEW_TIME_LOG]:
                     current_view = VIEW_MAIN
                     entity_for_dedicated_notes = None; selected_note_index = -1
                     command_buffer = ""; request_full_redraw = True
 
             elif key == 27: # ESC key
-                if current_view in [VIEW_DEDICATED_NOTES, VIEW_DAILY_NOTES]:
+                if current_view in [VIEW_DEDICATED_NOTES, VIEW_DAILY_NOTES, VIEW_TIME_LOG]:
                     current_view = VIEW_MAIN
                     entity_for_dedicated_notes = None; selected_note_index = -1
+                    command_buffer = ""; request_full_redraw = True
+                elif current_view == VIEW_HOURLY_CHECKIN:
+                    # Cancel/ignore the check-in
+                    with data_lock:
+                        app_data["pending_checkin"] = None
+                        save_data(app_data)
+                    current_view = VIEW_MAIN
+                    selected_checkin_task_index = -1
                     command_buffer = ""; request_full_redraw = True
 
             if current_view == VIEW_MAIN:
@@ -2697,6 +2116,7 @@ def main(stdscr):
                     current_view = VIEW_DAILY_NOTES
                     current_date_for_daily_notes = date.today()
                     command_buffer = ""; request_full_redraw = True; selected_note_index = -1
+                
 
                 elif key == curses.KEY_UP:
                     if current_ticket_subtask_list_visible:
@@ -2757,6 +2177,10 @@ def main(stdscr):
                             permanent_notifications = []
                             return "RESTART_FOR_LOGIN"
                         elif handle_result == "TOGGLE_HELP": show_help_footer = not show_help_footer
+                        elif handle_result == "VIEW_TIME_LOG":
+                            current_view = VIEW_TIME_LOG
+                            current_date_for_daily_notes = date.today()
+                            command_buffer = ""; request_full_redraw = True; selected_note_index = -1
                         elif handle_result != "NO_CHANGE":
                             with data_lock:
                                 app_data = handle_result
@@ -2806,7 +2230,7 @@ def main(stdscr):
                     elif key == curses.KEY_RESIZE:
                         request_full_redraw = True
 
-            elif current_view in [VIEW_DEDICATED_NOTES, VIEW_DAILY_NOTES]:
+            elif current_view in [VIEW_DEDICATED_NOTES, VIEW_DAILY_NOTES, VIEW_TIME_LOG]:
                 notes_list_size = 0
                 with data_lock:
                     if current_view == VIEW_DEDICATED_NOTES and entity_for_dedicated_notes:
@@ -2896,12 +2320,136 @@ def main(stdscr):
                         current_date_for_daily_notes = date.today()
                         current_view = VIEW_MAIN
                     command_buffer = ""; selected_note_index = -1; request_full_redraw = True
+                
+                elif key == curses.KEY_LEFT and current_view == VIEW_TIME_LOG:
+                    current_date_for_daily_notes -= timedelta(days=1)
+                    command_buffer = ""; selected_note_index = -1; request_full_redraw = True
+                elif key == curses.KEY_RIGHT and current_view == VIEW_TIME_LOG:
+                    current_date_for_daily_notes += timedelta(days=1)
+                    if current_date_for_daily_notes > date.today():
+                        current_date_for_daily_notes = date.today()
+                    command_buffer = ""; selected_note_index = -1; request_full_redraw = True
                 elif isinstance(key, str) and key.isprintable():
                     command_buffer += key
                     request_full_redraw = True
                 elif key in [curses.KEY_BACKSPACE, 127, 8]:
                     command_buffer = command_buffer[:-1]
                     request_full_redraw = True
+            
+            elif current_view == VIEW_HOURLY_CHECKIN:
+                # Handle hourly check-in inputs
+                if key in ['Y', 'y']:
+                    # User worked on suggested task
+                    with data_lock:
+                        pending = app_data.get("pending_checkin", {})
+                        if pending:
+                            duration_seconds = pending.get("duration_seconds", 3600)
+                            suggested_subtask = pending.get("suggested_subtask")
+                            if suggested_subtask:
+                                from inc.time_tracker import add_time_entry
+                                add_time_entry(app_data, entry_type="task", subtask=suggested_subtask, seconds=duration_seconds)
+                                save_data(app_data)
+                            app_data["pending_checkin"] = None
+                            save_data(app_data)
+                    current_view = VIEW_MAIN
+                    selected_checkin_task_index = -1
+                    command_buffer = ""; request_full_redraw = True
+                
+                elif key in ['S', 's']:
+                    # User wants to select a different task - toggle selection mode
+                    if selected_checkin_task_index == -1:
+                        selected_checkin_task_index = 0  # Start selection
+                    request_full_redraw = True
+                
+                elif key in ['B', 'b']:
+                    # User was on break/meeting
+                    with data_lock:
+                        pending = app_data.get("pending_checkin", {})
+                        if pending:
+                            duration_seconds = pending.get("duration_seconds", 3600)
+                            from inc.time_tracker import add_time_entry
+                            add_time_entry(app_data, entry_type="break", subtask=None, seconds=duration_seconds)
+                            save_data(app_data)
+                        app_data["pending_checkin"] = None
+                        save_data(app_data)
+                    current_view = VIEW_MAIN
+                    selected_checkin_task_index = -1
+                    command_buffer = ""; request_full_redraw = True
+                
+                elif key in ['I', 'i']:
+                    # Ignore this check-in
+                    with data_lock:
+                        app_data["pending_checkin"] = None
+                        save_data(app_data)
+                    current_view = VIEW_MAIN
+                    selected_checkin_task_index = -1
+                    command_buffer = ""; request_full_redraw = True
+                
+                elif key == curses.KEY_UP and selected_checkin_task_index > 0:
+                    selected_checkin_task_index -= 1
+                    request_full_redraw = True
+                
+                elif key == curses.KEY_DOWN:
+                    # Get available tasks from the hourly check-in view
+                    from inc.views.hourly_checkin_view import display_hourly_checkin_view
+                    # We'll need the task list - this is a bit hacky but works
+                    available_tasks = []
+                    with data_lock:
+                        current_ticket = app_data.get("current_ticket")
+                        if current_ticket:
+                            subtasks = app_data.get("sub_tasks", {}).get(current_ticket, {})
+                            for sub_name, sub_details in subtasks.items():
+                                if isinstance(sub_details, dict) and sub_details.get("status") != "hidden":
+                                    available_tasks.append(f"[{current_ticket}] {sub_name}")
+                        
+                        # Add paused tasks
+                        for paused_task in app_data.get("paused_tasks", []):
+                            ticket_name = paused_task.get("ticket")
+                            if ticket_name:
+                                subtasks = paused_task.get("sub_tasks", {})
+                                for sub_name, sub_details in subtasks.items():
+                                    if isinstance(sub_details, dict) and sub_details.get("status") != "hidden":
+                                        available_tasks.append(f"[{ticket_name}] {sub_name}")
+                    
+                    if selected_checkin_task_index < len(available_tasks) - 1:
+                        selected_checkin_task_index += 1
+                    request_full_redraw = True
+                
+                elif key in ['\n', curses.KEY_ENTER] and selected_checkin_task_index >= 0:
+                    # User confirmed selection of a task
+                    available_tasks = []
+                    with data_lock:
+                        current_ticket = app_data.get("current_ticket")
+                        if current_ticket:
+                            subtasks = app_data.get("sub_tasks", {}).get(current_ticket, {})
+                            for sub_name, sub_details in subtasks.items():
+                                if isinstance(sub_details, dict) and sub_details.get("status") != "hidden":
+                                    available_tasks.append((current_ticket, sub_name))
+                        
+                        # Add paused tasks
+                        for paused_task in app_data.get("paused_tasks", []):
+                            ticket_name = paused_task.get("ticket")
+                            if ticket_name:
+                                subtasks = paused_task.get("sub_tasks", {})
+                                for sub_name, sub_details in subtasks.items():
+                                    if isinstance(sub_details, dict) and sub_details.get("status") != "hidden":
+                                        available_tasks.append((ticket_name, sub_name))
+                        
+                        if 0 <= selected_checkin_task_index < len(available_tasks):
+                            selected_ticket, selected_subtask = available_tasks[selected_checkin_task_index]
+                            pending = app_data.get("pending_checkin", {})
+                            if pending:
+                                duration_seconds = pending.get("duration_seconds", 3600)
+                                formatted_subtask = f"[{selected_ticket}] {selected_subtask}"
+                                from inc.time_tracker import add_time_entry
+                                add_time_entry(app_data, entry_type="task", subtask=formatted_subtask, seconds=duration_seconds)
+                                save_data(app_data)
+                            app_data["pending_checkin"] = None
+                            save_data(app_data)
+                    
+                    current_view = VIEW_MAIN
+                    selected_checkin_task_index = -1
+                    command_buffer = ""; request_full_redraw = True
 
             # Redraw the UI after every valid keypress.
             request_full_redraw = True
