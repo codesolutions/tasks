@@ -255,9 +255,31 @@ class HourlyCheckinScheduler:
                         now_ts = _now_ts()
                         ws = self.data_ref.get("work_session", {})
                         last_activity = ws.get("last_activity_ts")
-                        # skip if no recent activity
+                        # Auto-end work day if no recent activity
                         if last_activity and (now_ts - last_activity) > forget_min * 60:
-                            # user likely away; don't trigger
+                            # User has been idle too long - automatically end work day
+                            ws = self.data_ref.get("work_session", {})
+                            if ws.get("active"):
+                                # Log any remaining time if there's an active timer
+                                if ws.get("current_timer_start_ts") and self.data_ref.get("focused_subtask"):
+                                    # Calculate elapsed time up to when user went idle
+                                    elapsed_seconds = int(last_activity - ws["current_timer_start_ts"])
+                                    if elapsed_seconds > 0:
+                                        focused_ticket = self.data_ref.get("focused_ticket")
+                                        focused_subtask = self.data_ref.get("focused_subtask")
+                                        if focused_ticket and focused_subtask:
+                                            # Use the standardized format for time logging
+                                            normalized_subtask = f"[{focused_ticket}] {focused_subtask}"
+                                            add_time_entry(self.data_ref, entry_type="task", subtask=normalized_subtask, seconds=elapsed_seconds)
+                                
+                                # End the work session
+                                ws["active"] = False
+                                ws["end_time"] = _utc_iso_now()
+                                ws.pop("current_timer_start_ts", None)
+                                ws.pop("paused", None)  # Clear paused state if any
+                            
+                            # Clear any pending check-in since we're ending the day
+                            self.data_ref["pending_checkin"] = None
                             self.data_ref["last_checkin_ts"] = now_ts
                         else:
                             last_check = self.data_ref.get("last_checkin_ts")
