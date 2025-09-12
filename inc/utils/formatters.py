@@ -132,3 +132,41 @@ def format_file_size(size_bytes: int) -> str:
             return f"{size_bytes:.1f}{unit}"
         size_bytes /= 1024.0
     return f"{size_bytes:.1f}TB"
+
+
+def format_subtask_for_title(subtask_name: str) -> str:
+    """
+    Extract the last part of a URL-like subtask name for a cleaner title.
+    
+    Args:
+        subtask_name: The subtask name/URL to format
+        
+    Returns:
+        Clean title string
+    """
+    if subtask_name.startswith("http"):
+        try:
+            return [part for part in subtask_name.split('/') if part][-1]
+        except IndexError:
+            return subtask_name
+    return subtask_name
+
+
+def focus_window(window_title: str) -> bool:
+    """
+    Focus the terminal window with the given title using xdotool.
+    
+    Args:
+        window_title: Title of the window to focus
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        import subprocess
+        subprocess.run([
+            'xdotool', 'search', '--name', window_title, 'windowactivate'
+        ], capture_output=True, check=True)
+        return True
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return False  # Silently fail if xdotool is not available or fails
