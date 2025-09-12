@@ -80,9 +80,24 @@ class AddSubtaskCommand(BaseCommand):
                 "jira_refreshed": None
             }
             
+            # Handle time tracking when focus changes
+            from inc.time_tracker import stop_focus_timer_and_log, start_focus_timer
+            
+            # Stop current timer if there was a focused subtask
+            old_focused_ticket = data.get("focused_ticket")
+            old_focused_subtask = data.get("focused_subtask")
+            if old_focused_ticket and old_focused_subtask:
+                stop_focus_timer_and_log(data)
+            
             # Set focus on the newly added subtask
             data["focused_ticket"] = target_project
             data["focused_subtask"] = sub_task_url
+            
+            # Start new timer for the focused subtask
+            start_focus_timer(data)
+            
+            # Update last checkin timestamp to reset the timer
+            data["last_checkin_ts"] = time.time()
             
             if switch_message:
                 message = t('cmd_info_subtask_added_with_switch',
@@ -275,26 +290,25 @@ class FocusSubtaskCommand(BaseCommand):
         subtask_name, subtask_details = context.current_ticket_subtask_list[context.selected_subtask_idx]
         current_status = subtask_details.get("status", "todo")
         
-        # Log time for previously focused subtask if work session is active
-        self._log_previous_focused_time(data)
+        # Handle time tracking transition properly
+        from inc.time_tracker import stop_focus_timer_and_log, start_focus_timer
+        
+        # Stop current timer and log time for previously focused subtask
+        old_focused_ticket = data.get("focused_ticket")
+        old_focused_subtask = data.get("focused_subtask")
+        if old_focused_ticket and old_focused_subtask:
+            stop_focus_timer_and_log(data)
         
         # Unfocus all other subtasks in the current ticket
         for st_name, st_details in data["sub_tasks"][current_ticket].items():
             if st_details.get("status") == "focused":
                 st_details["status"] = "todo"
         
-        work_session = data.get("work_session", {})
-        
         if current_status == "focused":
             # Unfocus the subtask
             data["sub_tasks"][current_ticket][subtask_name]["status"] = "todo"
             data["focused_ticket"] = None
             data["focused_subtask"] = None
-            
-            # Clear timer when unfocusing
-            if work_session.get("active"):
-                work_session.pop("current_timer_start_ts", None)
-            
             message = t('cmd_info_focus_cleared')
         else:
             # Focus the subtask
@@ -302,12 +316,13 @@ class FocusSubtaskCommand(BaseCommand):
             data["focused_ticket"] = current_ticket
             data["focused_subtask"] = subtask_name
             
-            # Start timer when focusing if work session is active
-            if work_session.get("active") and not work_session.get("paused"):
-                work_session["current_timer_start_ts"] = datetime.now().timestamp()
-                work_session["last_activity_ts"] = datetime.now().timestamp()
+            # Start new timer for the focused subtask
+            start_focus_timer(data)
             
             message = t('cmd_info_subtask_focus_set', name=subtask_name)
+        
+        # Reset checkin timer when focus changes
+        data["last_checkin_ts"] = time.time()
         
         return CommandResult(
             success=True,
@@ -319,18 +334,7 @@ class FocusSubtaskCommand(BaseCommand):
     def get_usage(self) -> str:
         return "f - Toggle focus on selected subtask"
     
-    def _log_previous_focused_time(self, data):
-        """Log time for previously focused subtask if work session is active."""
-        work_session = data.get("work_session", {})
-        if work_session.get("active") and not work_session.get("paused"):
-            prev_focused = data.get("focused_subtask")
-            prev_focused_ticket = data.get("focused_ticket")
-            if prev_focused and prev_focused_ticket and work_session.get("current_timer_start_ts"):
-                elapsed_seconds = int(datetime.now().timestamp() - work_session["current_timer_start_ts"])
-                if elapsed_seconds > 0:
-                    from inc.time_tracker import add_time_entry
-                    normalized_subtask = f"[{prev_focused_ticket}] {prev_focused}"
-                    add_time_entry(data, entry_type="task", subtask=normalized_subtask, seconds=elapsed_seconds)
+    # Removed _log_previous_focused_time - now handled by unified time tracking system
 
 
 class FocusCommand(BaseCommand):
@@ -339,12 +343,24 @@ class FocusCommand(BaseCommand):
     def execute(self, data, args: List[str], context: CommandContext) -> CommandResult:
         if len(args) < 2:
             # Clear focus if no arguments
+            from inc.time_tracker import stop_focus_timer_and_log
+            
+            # Stop current timer and log time
+            old_focused_ticket = data.get("focused_ticket")
+            old_focused_subtask = data.get("focused_subtask")
+            if old_focused_ticket and old_focused_subtask:
+                stop_focus_timer_and_log(data)
+            
             data["focused_ticket"] = None
             data["focused_subtask"] = None
             for ticket_subtasks in data["sub_tasks"].values():
                 for st in ticket_subtasks.values():
                     if isinstance(st, dict) and st.get("status") == "focused":
                         st["status"] = "todo"
+            
+            # Reset checkin timer when focus cleared
+            data["last_checkin_ts"] = time.time()
+            
             return CommandResult(
                 success=True,
                 data_modified=True,
@@ -398,8 +414,14 @@ class FocusCommand(BaseCommand):
                     )
         
         if target_ticket:
-            # Log time for previously focused subtask
-            self._log_previous_focused_time(data)
+            # Handle time tracking transition
+            from inc.time_tracker import stop_focus_timer_and_log, start_focus_timer
+            
+            # Stop current timer and log time for previously focused subtask
+            old_focused_ticket = data.get("focused_ticket")
+            old_focused_subtask = data.get("focused_subtask")
+            if old_focused_ticket and old_focused_subtask:
+                stop_focus_timer_and_log(data)
             
             # Clear all previous focuses
             data["focused_ticket"] = None
@@ -411,20 +433,16 @@ class FocusCommand(BaseCommand):
             
             # Set new focus
             data["focused_ticket"] = target_ticket
-            work_session = data.get("work_session", {})
             
             if target_subtask:
                 data["sub_tasks"][target_ticket][target_subtask]["status"] = "focused"
                 data["focused_subtask"] = target_subtask
                 
-                # Start timer for new subtask if work session is active
-                if work_session.get("active") and not work_session.get("paused"):
-                    work_session["current_timer_start_ts"] = datetime.now().timestamp()
-                    work_session["last_activity_ts"] = datetime.now().timestamp()
-            else:
-                # Clear timer when focusing on ticket without subtask
-                if work_session.get("active"):
-                    work_session.pop("current_timer_start_ts", None)
+                # Start new timer for the focused subtask
+                start_focus_timer(data)
+            
+            # Reset checkin timer when focus changes
+            data["last_checkin_ts"] = time.time()
             
             return CommandResult(
                 success=True,
@@ -452,18 +470,7 @@ class FocusCommand(BaseCommand):
                 all_tickets_set.add(paused_item["ticket"])
         return sorted([t for t in filter(None, all_tickets_set) if t not in completed_tickets])
     
-    def _log_previous_focused_time(self, data):
-        """Log time for previously focused subtask if work session is active."""
-        work_session = data.get("work_session", {})
-        if work_session.get("active") and not work_session.get("paused"):
-            prev_focused = data.get("focused_subtask")
-            prev_focused_ticket = data.get("focused_ticket")
-            if prev_focused and prev_focused_ticket and work_session.get("current_timer_start_ts"):
-                elapsed_seconds = int(datetime.now().timestamp() - work_session["current_timer_start_ts"])
-                if elapsed_seconds > 0:
-                    from inc.time_tracker import add_time_entry
-                    normalized_subtask = f"[{prev_focused_ticket}] {prev_focused}"
-                    add_time_entry(data, entry_type="task", subtask=normalized_subtask, seconds=elapsed_seconds)
+    # Removed duplicate _log_previous_focused_time - now handled by unified time tracking system
 
 
 class AddPRCommand(BaseCommand):

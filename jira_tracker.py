@@ -639,6 +639,177 @@ def main(stdscr):
                 elif key in [curses.KEY_BACKSPACE, 127, 8]:
                     command_buffer = command_buffer[:-1]
                     request_full_redraw = True
+            
+            # Handle hourly checkin view inputs - restore missing functionality
+            elif current_view == VIEW_HOURLY_CHECKIN:
+                if key in ['Y', 'y']:
+                    # User worked on suggested task
+                    with data_lock:
+                        from inc.time_tracker import add_time_entry, start_focus_timer
+                        
+                        # Stop any currently running timer without logging it
+                        # (the hourly check-in duration will replace it)
+                        work_session = app_data.get("work_session", {})
+                        if work_session.get("active") and not work_session.get("paused"):
+                            work_session.pop("current_timer_start_ts", None)
+                        
+                        # Log the time from the hourly check-in
+                        pending = app_data.get("pending_checkin", {})
+                        if pending:
+                            duration_seconds = pending.get("duration_seconds", 3600)
+                            suggested_subtask = pending.get("suggested_subtask")
+                            if suggested_subtask:
+                                add_time_entry(app_data, entry_type="task", subtask=suggested_subtask, seconds=duration_seconds)
+                                data_manager.save_data(app_data)
+                                
+                                # Restart timer for the suggested subtask
+                                start_focus_timer(app_data)
+                        
+                        app_data["pending_checkin"] = None
+                        data_manager.save_data(app_data)
+                    
+                    current_view = VIEW_MAIN
+                    selected_checkin_task_index = -1
+                    command_buffer = ""
+                    request_full_redraw = True
+                
+                elif key in ['S', 's']:
+                    # User wants to select a different task - start selection mode
+                    with data_lock:
+                        from inc.time_tracker import stop_focus_timer_and_log
+                        
+                        # Stop current timer and log time before entering selection mode
+                        stop_focus_timer_and_log(app_data)
+                        
+                        # Get available tasks to ensure we have a valid starting index
+                        available_tasks = []
+                        current_ticket = app_data.get("current_ticket")
+                        if current_ticket:
+                            subtasks = app_data.get("sub_tasks", {}).get(current_ticket, {})
+                            for sub_name, sub_details in subtasks.items():
+                                if isinstance(sub_details, dict) and sub_details.get("status") != "hidden":
+                                    available_tasks.append((current_ticket, sub_name))
+                        
+                        # Add paused tasks
+                        for paused_task in app_data.get("paused_tasks", []):
+                            ticket_name = paused_task.get("ticket")
+                            if ticket_name:
+                                subtasks = paused_task.get("sub_tasks", {})
+                                for sub_name, sub_details in subtasks.items():
+                                    if isinstance(sub_details, dict) and sub_details.get("status") != "hidden":
+                                        available_tasks.append((ticket_name, sub_name))
+                    
+                    if available_tasks:
+                        selected_checkin_task_index = 0  # Start selection at first task
+                    else:
+                        selected_checkin_task_index = -1  # No tasks available
+                    request_full_redraw = True
+                
+                elif key in ['B', 'b']:
+                    # User was on break/meeting
+                    with data_lock:
+                        from inc.time_tracker import add_time_entry, stop_focus_timer_and_log
+                        
+                        # Stop current timer and log time before logging break time
+                        stop_focus_timer_and_log(app_data)
+                        
+                        # Now log the break time from the hourly check-in
+                        pending = app_data.get("pending_checkin", {})
+                        if pending:
+                            duration_seconds = pending.get("duration_seconds", 3600)
+                            add_time_entry(app_data, entry_type="break", subtask=None, seconds=duration_seconds)
+                            data_manager.save_data(app_data)
+                        
+                        app_data["pending_checkin"] = None
+                        data_manager.save_data(app_data)
+                    
+                    current_view = VIEW_MAIN
+                    selected_checkin_task_index = -1
+                    command_buffer = ""
+                    request_full_redraw = True
+                
+                elif key in ['I', 'i']:
+                    # Ignore this check-in
+                    with data_lock:
+                        app_data["pending_checkin"] = None
+                        data_manager.save_data(app_data)
+                    
+                    current_view = VIEW_MAIN
+                    selected_checkin_task_index = -1
+                    command_buffer = ""
+                    request_full_redraw = True
+                
+                elif key == curses.KEY_UP and selected_checkin_task_index > 0:
+                    selected_checkin_task_index -= 1
+                    request_full_redraw = True
+                
+                elif key == curses.KEY_DOWN:
+                    # Get available tasks for bounds checking
+                    available_tasks = []
+                    with data_lock:
+                        current_ticket = app_data.get("current_ticket")
+                        if current_ticket:
+                            subtasks = app_data.get("sub_tasks", {}).get(current_ticket, {})
+                            for sub_name, sub_details in subtasks.items():
+                                if isinstance(sub_details, dict) and sub_details.get("status") != "hidden":
+                                    available_tasks.append((current_ticket, sub_name))
+                        
+                        # Add paused tasks
+                        for paused_task in app_data.get("paused_tasks", []):
+                            ticket_name = paused_task.get("ticket")
+                            if ticket_name:
+                                subtasks = paused_task.get("sub_tasks", {})
+                                for sub_name, sub_details in subtasks.items():
+                                    if isinstance(sub_details, dict) and sub_details.get("status") != "hidden":
+                                        available_tasks.append((ticket_name, sub_name))
+                    
+                    if selected_checkin_task_index != -1 and selected_checkin_task_index < len(available_tasks) - 1:
+                        selected_checkin_task_index += 1
+                    request_full_redraw = True
+                
+                elif key in ['\n', curses.KEY_ENTER] and selected_checkin_task_index >= 0:
+                    # User confirmed selection of a task
+                    available_tasks = []
+                    with data_lock:
+                        from inc.time_tracker import add_time_entry, start_focus_timer
+                        
+                        current_ticket = app_data.get("current_ticket")
+                        if current_ticket:
+                            subtasks = app_data.get("sub_tasks", {}).get(current_ticket, {})
+                            for sub_name, sub_details in subtasks.items():
+                                if isinstance(sub_details, dict) and sub_details.get("status") != "hidden":
+                                    available_tasks.append((current_ticket, sub_name))
+                        
+                        # Add paused tasks
+                        for paused_task in app_data.get("paused_tasks", []):
+                            ticket_name = paused_task.get("ticket")
+                            if ticket_name:
+                                subtasks = paused_task.get("sub_tasks", {})
+                                for sub_name, sub_details in subtasks.items():
+                                    if isinstance(sub_details, dict) and sub_details.get("status") != "hidden":
+                                        available_tasks.append((ticket_name, sub_name))
+                        
+                        if 0 <= selected_checkin_task_index < len(available_tasks):
+                            selected_ticket, selected_subtask = available_tasks[selected_checkin_task_index]
+                            pending = app_data.get("pending_checkin", {})
+                            if pending:
+                                duration_seconds = pending.get("duration_seconds", 3600)
+                                # Use the actual subtask identifier, which will be normalized by add_time_entry
+                                add_time_entry(app_data, entry_type="task", subtask=selected_subtask, seconds=duration_seconds)
+                                data_manager.save_data(app_data)
+                                
+                                # Update focus to the selected subtask and start timer
+                                app_data["focused_ticket"] = selected_ticket
+                                app_data["focused_subtask"] = selected_subtask
+                                start_focus_timer(app_data)
+                            
+                            app_data["pending_checkin"] = None
+                            data_manager.save_data(app_data)
+                    
+                    current_view = VIEW_MAIN
+                    selected_checkin_task_index = -1
+                    command_buffer = ""
+                    request_full_redraw = True
         
         # Render UI with error handling to prevent crashes
         if user_activity_caused_draw_this_cycle or request_full_redraw or \

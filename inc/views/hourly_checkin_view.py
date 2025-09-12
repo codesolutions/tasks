@@ -22,9 +22,22 @@ def display_hourly_checkin_view(stdscr, data, selected_task_index=-1):
     duration_str = format_timedelta_minutes(timedelta(seconds=duration_seconds))
     
     row = 1
-    stdscr.addstr(row, 2, f"Time for your hourly check-in! ({now.strftime('%H:%M')})")
+    # Show current time dynamically - this gets updated on each render
+    current_time_str = datetime.now().strftime('%H:%M:%S')
+    stdscr.addstr(row, 2, f"Time for your hourly check-in! (Current time: {current_time_str})")
     row += 1
-    stdscr.addstr(row, 2, f"Please account for the last {duration_str}.")
+    
+    # Show when the period started for clarity
+    started_at = pending_checkin.get("started_at")
+    if started_at:
+        try:
+            # Parse the ISO timestamp and show when tracking started
+            start_dt = datetime.fromisoformat(started_at.replace('Z', '+00:00'))
+            stdscr.addstr(row, 2, f"Tracking period: {start_dt.strftime('%H:%M')} - {current_time_str} ({duration_str})")
+        except (ValueError, AttributeError):
+            stdscr.addstr(row, 2, f"Please account for the last {duration_str}.")
+    else:
+        stdscr.addstr(row, 2, f"Please account for the last {duration_str}.")
     row += 2
 
     if suggested_subtask:
