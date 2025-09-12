@@ -197,6 +197,30 @@ def note_user_activity(data: Dict[str, Any]) -> None:
     data["work_session"]["last_activity_ts"] = _now_ts()
 
 
+def add_comment_to_latest_entry(data: Dict[str, Any], comment_text: str) -> bool:
+    """Add a comment to the most recent time entry"""
+    time_log = data.get("time_log", {})
+    
+    # Find the most recent entry across all dates
+    latest_entry = None
+    latest_date = None
+    
+    for date_iso, entries in time_log.items():
+        if not entries:
+            continue
+        for entry in reversed(entries):  # Start from most recent in each day
+            if latest_entry is None or entry["created_at"] > latest_entry["created_at"]:
+                latest_entry = entry
+                latest_date = date_iso
+                break  # Only need the most recent from each day
+    
+    if latest_entry:
+        latest_entry["comment"] = comment_text
+        return True
+    
+    return False
+
+
 class HourlyCheckinScheduler:
     """Background scheduler that triggers periodic check-ins based on configuration."""
 
@@ -240,8 +264,8 @@ class HourlyCheckinScheduler:
                             if last_check is None:
                                 self.data_ref["last_checkin_ts"] = now_ts
                             elif now_ts - last_check >= interval_min * 60:
-                                # schedule a check-in of the last full interval
-                                duration = interval_min * 60
+                                # schedule a check-in with actual elapsed time since last check
+                                duration = int(now_ts - last_check)
                                 suggested = None
                                 if self.data_ref.get("focused_subtask") and self.data_ref.get("focused_ticket"):
                                     suggested = f"[{self.data_ref.get('focused_ticket')}] {self.data_ref.get('focused_subtask')}"

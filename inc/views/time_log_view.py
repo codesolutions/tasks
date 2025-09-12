@@ -62,26 +62,52 @@ def display_time_log_view(stdscr, data, current_date_for_log):
         stdscr.addstr(row, 0, "No time logged for this day.")
         row += 2
 
-    # Display subtask breakdown
-    if subtask_totals:
-        stdscr.addstr(row, 0, "Task Breakdown:")
+    # Display individual entries (not grouped)
+    if time_entries:
+        stdscr.addstr(row, 0, "Individual Time Entries:")
         row += 1
         
-        # Sort by time spent (descending)
-        sorted_subtasks = sorted(subtask_totals.items(), key=lambda x: x[1], reverse=True)
+        # Sort by created_at timestamp (most recent first)
+        sorted_entries = sorted(time_entries, key=lambda x: x.get("created_at", ""), reverse=True)
         
-        for subtask, seconds in sorted_subtasks:
+        for entry in sorted_entries:
             if row >= height - 3:  # Leave space for footer
                 stdscr.addstr(row, 2, "... (more entries)")
                 break
+                
+            entry_type = entry.get("type", "task")
+            subtask = entry.get("subtask", "Unknown")
+            seconds = entry.get("seconds", 0)
+            created_at = entry.get("created_at", "")
+            comment = entry.get("comment", "")
+            
             time_str = format_timedelta_minutes(timedelta(seconds=seconds))
             
+            # Parse timestamp for display (convert from UTC to local time)
+            time_display = ""
+            if created_at:
+                try:
+                    # Parse UTC timestamp and convert to local time
+                    dt = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                    # Convert UTC to local timestamp, then to local datetime
+                    local_dt = datetime.fromtimestamp(dt.timestamp())
+                    time_display = local_dt.strftime('%H:%M')
+                except:
+                    time_display = created_at[:5] if len(created_at) >= 5 else created_at
+            
+            # Format entry type
+            type_prefix = {
+                "task": "🔧",
+                "break": "☕", 
+                "meeting": "📅"
+            }.get(entry_type, "•")
+            
             # Extract clean display name from subtask identifier
-            display_name = subtask
-            if subtask.startswith('[') and '] ' in subtask:
+            display_name = subtask or "N/A"
+            if subtask and subtask.startswith('[') and '] ' in subtask:
                 # Format: '[ProjectName] TICKET-123' -> show as is
                 display_name = subtask
-            elif 'browse/' in subtask:
+            elif subtask and 'browse/' in subtask:
                 # Old URL format - extract just the ticket ID
                 ticket_id = subtask.split('browse/')[-1]
                 project_match = subtask.split('/browse/')[0].split('/')[-1] if '/' in subtask else None
@@ -91,9 +117,24 @@ def display_time_log_view(stdscr, data, current_date_for_log):
                     display_name = ticket_id
             
             # Truncate if too long
-            display_name = display_name[:width-20] if len(display_name) > width-20 else display_name
-            stdscr.addstr(row, 2, f"• {display_name}: {time_str}")
+            max_name_width = width - 30  # Leave space for time and timestamp
+            if len(display_name) > max_name_width:
+                display_name = display_name[:max_name_width-3] + "..."
+            
+            # Main entry line
+            entry_line = f"{type_prefix} {time_display} - {display_name}: {time_str}"
+            stdscr.addstr(row, 2, entry_line[:width-3])
             row += 1
+            
+            # Comment line if present
+            if comment and row < height - 3:
+                comment_prefix = "    💬 "
+                comment_text = comment[:width - len(comment_prefix) - 5] if len(comment) > width - len(comment_prefix) - 5 else comment
+                try:
+                    stdscr.addstr(row, 2, f"{comment_prefix}{comment_text}", curses.color_pair(3))
+                except:
+                    stdscr.addstr(row, 2, f"{comment_prefix}{comment_text}")
+                row += 1
     
     # Show work session status
     work_session = data.get("work_session", {})

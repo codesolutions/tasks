@@ -1415,6 +1415,19 @@ def handle_input(data, command_parts, stdscr, current_view_mode, selected_subtas
     elif command == 'timelog' or command == 'log':
         return "VIEW_TIME_LOG"
     
+    elif command == 'c':
+        if len(command_parts) > 1:
+            comment_text = " ".join(command_parts[1:])
+            from inc.time_tracker import add_comment_to_latest_entry
+            success = add_comment_to_latest_entry(data, comment_text)
+            if success:
+                data_was_modified = True
+                show_notification(stdscr, f"Comment added to latest entry: {comment_text[:30]}...")
+            else:
+                show_notification(stdscr, "No recent time entries found to comment on")
+        else:
+            show_notification(stdscr, "Usage: c <comment text>")
+    
     elif command == 'logtime':
         if len(command_parts) >= 2:
             try:
@@ -2384,21 +2397,14 @@ def main(stdscr):
                 if key in ['Y', 'y']:
                     # User worked on suggested task
                     with data_lock:
-                        # First, handle any currently running timer
+                        # Stop any currently running timer without logging it
+                        # (the hourly check-in duration will replace it)
                         work_session = app_data.get("work_session", {})
                         if work_session.get("active") and not work_session.get("paused"):
-                            if work_session.get("current_timer_start_ts") and app_data.get("focused_subtask"):
-                                elapsed_seconds = int(datetime.now().timestamp() - work_session["current_timer_start_ts"])
-                                if elapsed_seconds > 0:
-                                    from inc.time_tracker import add_time_entry
-                                    focused_ticket = app_data.get("focused_ticket")
-                                    focused_subtask = app_data.get("focused_subtask")
-                                    if focused_ticket and focused_subtask:
-                                        # Use the standardized format for time logging
-                                        normalized_subtask = f"[{focused_ticket}] {focused_subtask}"
-                                        add_time_entry(app_data, entry_type="task", subtask=normalized_subtask, seconds=elapsed_seconds)
+                            # Just stop the timer, don't log elapsed time since check-in replaces it
+                            work_session.pop("current_timer_start_ts", None)
                         
-                        # Now log the time from the hourly check-in
+                        # Log the time from the hourly check-in
                         pending = app_data.get("pending_checkin", {})
                         if pending:
                             duration_seconds = pending.get("duration_seconds", 3600)
