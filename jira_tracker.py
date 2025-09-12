@@ -16,6 +16,7 @@ from datetime import datetime, date, timedelta
 
 # Configuration and core modules
 import inc.config_manager
+import inc.helpers
 from inc.helpers import t
 
 # Constants and utilities
@@ -264,28 +265,17 @@ def main(stdscr):
         
         height, width = new_height, new_width
         
-        # Get current state
-        with data_lock:
-            ticket_name_at_loop_start = app_data.get("current_ticket")
+        # Initialize state variables 
+        ticket_name_at_loop_start = None
+        current_ticket_subtask_list_visible = []
+        all_displayable_tickets = []
+        
+        # Get current state and update lists dynamically
+        def update_current_state():
+            """Update current state variables from app data"""
+            nonlocal ticket_name_at_loop_start, current_ticket_subtask_list_visible, all_displayable_tickets
             
-            # Handle hourly check-in
-            if app_data.get("pending_checkin") and current_view == VIEW_MAIN:
-                current_view = VIEW_HOURLY_CHECKIN
-                selected_checkin_task_index = -1
-                command_buffer = ""
-                request_full_redraw = True
-                
-                # Send notification
-                pending_checkin = app_data.get("pending_checkin", {})
-                duration_minutes = pending_checkin.get("duration_seconds", 3600) // 60
-                send_desktop_notification(
-                    "⏰ Hourly Check-in Time!",
-                    f"Please account for the last {duration_minutes} minutes. What were you working on?"
-                )
-                
-                window_title = inc.config_manager.config.get("NOTIFICATION_WINDOW_TITLE")
-                if window_title:
-                    focus_window(window_title)
+            ticket_name_at_loop_start = app_data.get("current_ticket")
             
             # Build current subtask list
             current_ticket_subtasks = app_data.get("sub_tasks", {}).get(ticket_name_at_loop_start, {}) if ticket_name_at_loop_start else {}
@@ -312,6 +302,29 @@ def main(stdscr):
                 t for t in filter(None, all_tickets_set) 
                 if t not in completed_tickets
             ])
+        
+        with data_lock:
+            # Handle hourly check-in
+            if app_data.get("pending_checkin") and current_view == VIEW_MAIN:
+                current_view = VIEW_HOURLY_CHECKIN
+                selected_checkin_task_index = -1
+                command_buffer = ""
+                request_full_redraw = True
+                
+                # Send notification
+                pending_checkin = app_data.get("pending_checkin", {})
+                duration_minutes = pending_checkin.get("duration_seconds", 3600) // 60
+                send_desktop_notification(
+                    "⏰ Hourly Check-in Time!",
+                    f"Please account for the last {duration_minutes} minutes. What were you working on?"
+                )
+                
+                window_title = inc.config_manager.config.get("NOTIFICATION_WINDOW_TITLE")
+                if window_title:
+                    focus_window(window_title)
+            
+            # Initial state update
+            update_current_state()
         
         # Handle input
         key = -1
@@ -387,6 +400,15 @@ def main(stdscr):
                         if selected_subtask_index > -1:
                             selected_subtask_index -= 1
                         request_full_redraw = True
+                        # Handle Jira comment marking as read
+                        if selected_subtask_index != -1:
+                            sub_task_name, _ = current_ticket_subtask_list_visible[selected_subtask_index]
+                            jira_ticket_id = inc.helpers.get_jira_ticket_from_url(sub_task_name)
+                            with jira_cache_lock:
+                                if jira_ticket_id in jira_cache and (jira_cache[jira_ticket_id].get('new_jira_comment') or jira_cache[jira_ticket_id].get('new_trello_comment')):
+                                    jira_cache[jira_ticket_id]['new_jira_comment'] = False
+                                    jira_cache[jira_ticket_id]['new_trello_comment'] = False
+                                    data_manager.save_data(app_data)
                 
                 elif key == curses.KEY_DOWN:
                     if current_ticket_subtask_list_visible:
@@ -396,6 +418,15 @@ def main(stdscr):
                         else:
                             selected_subtask_index = -1
                         request_full_redraw = True
+                        # Handle Jira comment marking as read
+                        if selected_subtask_index != -1:
+                            sub_task_name, _ = current_ticket_subtask_list_visible[selected_subtask_index]
+                            jira_ticket_id = inc.helpers.get_jira_ticket_from_url(sub_task_name)
+                            with jira_cache_lock:
+                                if jira_ticket_id in jira_cache and (jira_cache[jira_ticket_id].get('new_jira_comment') or jira_cache[jira_ticket_id].get('new_trello_comment')):
+                                    jira_cache[jira_ticket_id]['new_jira_comment'] = False
+                                    jira_cache[jira_ticket_id]['new_trello_comment'] = False
+                                    data_manager.save_data(app_data)
                 
                 elif key == '\n' or key == curses.KEY_ENTER:
                     cmd_parts = command_buffer.split()
@@ -414,36 +445,57 @@ def main(stdscr):
                                     next_index = 0
                                 app_data["sub_tasks"][ticket_name_at_loop_start][sub_task_name]["status"] = status_cycle[next_index]
                                 data_manager.save_data(app_data)
+                                # Refresh state after subtask status change
+                                update_current_state()
                                 request_full_redraw = True
                     
                     # Handle command execution
                     elif cmd_parts:
                         with data_lock:
                             original_ticket = app_data.get("current_ticket")
-                            handle_result = handle_input_new(
-                                app_data, cmd_parts, stdscr, current_view, selected_subtask_index, 
-                                selected_note_index, current_ticket_subtask_list_visible, all_displayable_tickets
+                            
+                            # Create command context for the new command system
+                            from inc.commands.base_command import CommandContext
+                            from inc.core.command_handler import command_handler
+                            
+                            context = CommandContext(
+                                stdscr=stdscr,
+                                selected_subtask_idx=selected_subtask_index,
+                                current_view=current_view,
+                                show_help_footer=show_help_footer,
+                                current_ticket_subtask_list=current_ticket_subtask_list_visible
                             )
+                            context.selected_note_idx = selected_note_index
+                            
+                            # Handle the command with better error handling
+                            command_buffer_str = " ".join(cmd_parts)
+                            result = command_handler.handle_command(command_buffer_str, app_data, context)
                         
-                        if handle_result is None:
+                        # Show notification for command result
+                        if result.message:
+                            show_notification(stdscr, result.message)
+                        
+                        # Handle various result types
+                        if result.quit_requested:
                             break
-                        elif handle_result == "RESTART_FOR_LOGIN":
+                        elif result.restart_for_login:
                             permanent_notifications = []
                             return "RESTART_FOR_LOGIN"
-                        elif handle_result == "TOGGLE_HELP":
+                        elif result.toggle_help:
                             show_help_footer = not show_help_footer
-                        elif handle_result == "VIEW_TIME_LOG":
+                        elif result.view_change == "time_log":
                             current_view = VIEW_TIME_LOG
                             current_date_for_daily_notes = date.today()
                             command_buffer = ""
                             request_full_redraw = True
                             selected_note_index = -1
-                        elif handle_result != "NO_CHANGE":
+                        elif result.data_modified:
                             with data_lock:
-                                app_data = handle_result
                                 if app_data.get("current_ticket") != original_ticket:
                                     selected_subtask_index = -1
                                 data_manager.save_data(app_data)
+                                # Refresh state after data modification
+                                update_current_state()
                     
                     command_buffer = ""
                     request_full_redraw = True
@@ -465,31 +517,146 @@ def main(stdscr):
                 elif key == curses.KEY_RESIZE:
                     request_full_redraw = True
             
-            # Handle other view inputs (simplified - full implementation in view modules)
+            # Handle other view inputs - restore full functionality  
             elif current_view in [VIEW_DEDICATED_NOTES, VIEW_DAILY_NOTES, VIEW_TIME_LOG]:
-                # Note navigation, editing, etc. handled by view modules
+                # Get proper notes list size for bounds checking
+                notes_list_size = 0
+                with data_lock:
+                    if current_view == VIEW_DEDICATED_NOTES and entity_for_dedicated_notes:
+                        ent_type = entity_for_dedicated_notes.get("type")
+                        ent_name = entity_for_dedicated_notes.get("name")
+                        if ent_type == "task":
+                            notes_list_size = len(app_data.get("notes", {}).get(ent_name, []))
+                        elif ent_type == "subtask":
+                            main_task = entity_for_dedicated_notes.get("main_task_name")
+                            sub_details = app_data.get("sub_tasks",{}).get(main_task,{}).get(ent_name)
+                            if sub_details: 
+                                notes_list_size = len(sub_details.get("notes", []))
+                    elif current_view == VIEW_DAILY_NOTES:
+                        date_iso = current_date_for_daily_notes.isoformat()
+                        notes_list_size = len(app_data.get("daily_notes", {}).get(date_iso, []))
+                    elif current_view == VIEW_TIME_LOG:
+                        # Handle time log navigation
+                        pass
+                
+                # Navigation
                 if key == curses.KEY_UP:
                     if selected_note_index > -1:
                         selected_note_index -= 1
                     request_full_redraw = True
                 elif key == curses.KEY_DOWN:
-                    selected_note_index += 1  # Simplified - actual bounds checking in views
+                    if notes_list_size > 0 and selected_note_index < notes_list_size - 1:
+                        selected_note_index += 1
                     request_full_redraw = True
+                elif key == curses.KEY_LEFT and current_view == VIEW_TIME_LOG:
+                    # Navigate to previous day
+                    current_date_for_daily_notes = current_date_for_daily_notes - timedelta(days=1)
+                    request_full_redraw = True
+                elif key == curses.KEY_RIGHT and current_view == VIEW_TIME_LOG:
+                    # Navigate to next day  
+                    current_date_for_daily_notes = current_date_for_daily_notes + timedelta(days=1)
+                    request_full_redraw = True
+                elif key == curses.KEY_LEFT and current_view == VIEW_DAILY_NOTES:
+                    # Navigate to previous day
+                    current_date_for_daily_notes = current_date_for_daily_notes - timedelta(days=1)
+                    request_full_redraw = True
+                elif key == curses.KEY_RIGHT and current_view == VIEW_DAILY_NOTES:
+                    # Navigate to next day
+                    current_date_for_daily_notes = current_date_for_daily_notes + timedelta(days=1)
+                    request_full_redraw = True
+                # Scrolling support
+                elif key == curses.KEY_NPAGE:  # Page Down
+                    notes_scroll_offset += 10
+                    request_full_redraw = True
+                elif key == curses.KEY_PPAGE:  # Page Up
+                    notes_scroll_offset = max(0, notes_scroll_offset - 10)
+                    request_full_redraw = True
+                elif key == curses.KEY_MOUSE:  # Mouse wheel support
+                    try:
+                        _, mx, my, _, bstate = curses.getmouse()
+                        if bstate & curses.BUTTON4_PRESSED:  # Mouse wheel up
+                            notes_scroll_offset = max(0, notes_scroll_offset - 3)
+                            request_full_redraw = True
+                        elif bstate & curses.BUTTON5_PRESSED:  # Mouse wheel down
+                            notes_scroll_offset += 3
+                            request_full_redraw = True
+                    except curses.error:
+                        pass  # Ignore mouse errors
+                # Command handling for notes views
+                elif key == '\n' or key == curses.KEY_ENTER:
+                    cmd_parts = command_buffer.split()
+                    if cmd_parts:
+                        # Handle note deletion
+                        if cmd_parts[0].lower() == 'd' and selected_note_index != -1:
+                            if 0 <= selected_note_index < notes_list_size:
+                                with data_lock:
+                                    if current_view == VIEW_DEDICATED_NOTES:
+                                        ent_type = entity_for_dedicated_notes.get("type")
+                                        ent_name = entity_for_dedicated_notes.get("name")
+                                        if ent_type == "task":
+                                            if ent_name in app_data.get("notes", {}):
+                                                app_data["notes"][ent_name].pop(selected_note_index)
+                                                show_notification(stdscr, "Note deleted")
+                                        elif ent_type == "subtask":
+                                            main_task = entity_for_dedicated_notes.get("main_task_name")
+                                            if main_task in app_data.get("sub_tasks", {}) and ent_name in app_data["sub_tasks"][main_task]:
+                                                app_data["sub_tasks"][main_task][ent_name]["notes"].pop(selected_note_index)
+                                                show_notification(stdscr, "Note deleted")
+                                    elif current_view == VIEW_DAILY_NOTES:
+                                        date_iso = current_date_for_daily_notes.isoformat()
+                                        if date_iso in app_data.get("daily_notes", {}):
+                                            app_data["daily_notes"][date_iso].pop(selected_note_index)
+                                            show_notification(stdscr, "Daily note deleted")
+                                    data_manager.save_data(app_data)
+                                    selected_note_index = min(selected_note_index, max(0, notes_list_size - 2))
+                        else:
+                            # Add new note
+                            note_text = " ".join(cmd_parts)
+                            with data_lock:
+                                if current_view == VIEW_DEDICATED_NOTES and entity_for_dedicated_notes:
+                                    ent_type = entity_for_dedicated_notes.get("type")
+                                    ent_name = entity_for_dedicated_notes.get("name")
+                                    if ent_type == "task":
+                                        app_data.setdefault("notes", {}).setdefault(ent_name, []).append(note_text)
+                                        show_notification(stdscr, f"Note added to {ent_name}")
+                                    elif ent_type == "subtask":
+                                        main_task = entity_for_dedicated_notes.get("main_task_name")
+                                        app_data.setdefault("sub_tasks", {}).setdefault(main_task, {}).setdefault(ent_name, {}).setdefault("notes", []).append(note_text)
+                                        show_notification(stdscr, f"Note added to {ent_name}")
+                                elif current_view == VIEW_DAILY_NOTES:
+                                    date_iso = current_date_for_daily_notes.isoformat()
+                                    app_data.setdefault("daily_notes", {}).setdefault(date_iso, []).append(note_text)
+                                    show_notification(stdscr, f"Daily note added for {current_date_for_daily_notes.strftime('%Y-%m-%d')}")
+                                data_manager.save_data(app_data)
+                    command_buffer = ""
+                    request_full_redraw = True
+                # Text input
                 elif isinstance(key, str) and key.isprintable():
-                    command_buffer += key
+                    max_len = (width - 1) - len("> ") if width > 0 else 0
+                    if len(command_buffer) < max_len:
+                        command_buffer += key
                     request_full_redraw = True
                 elif key in [curses.KEY_BACKSPACE, 127, 8]:
                     command_buffer = command_buffer[:-1]
                     request_full_redraw = True
         
-        # Render UI
+        # Render UI with error handling to prevent crashes
         if user_activity_caused_draw_this_cycle or request_full_redraw or \
            (current_time - last_clock_refresh_time >= clock_refresh_interval):
             
-            display_ui(stdscr, app_data, command_buffer, request_full_redraw, selected_subtask_index, 
-                      current_view, entity_for_dedicated_notes, current_ticket_subtask_list_visible, 
-                      show_help_footer, current_date_for_daily_notes, selected_note_index, 
-                      jira_cache, jira_cache_lock, notes_scroll_offset, selected_checkin_task_index)
+            try:
+                display_ui(stdscr, app_data, command_buffer, request_full_redraw, selected_subtask_index, 
+                          current_view, entity_for_dedicated_notes, current_ticket_subtask_list_visible, 
+                          show_help_footer, current_date_for_daily_notes, selected_note_index, 
+                          jira_cache, jira_cache_lock, notes_scroll_offset, selected_checkin_task_index)
+            except curses.error as e:
+                # Handle curses errors gracefully - usually from window resize
+                request_full_redraw = True
+                try:
+                    stdscr.clear()
+                    stdscr.refresh()
+                except curses.error:
+                    pass
             
             last_clock_refresh_time = current_time
             if request_full_redraw:
