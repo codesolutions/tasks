@@ -36,6 +36,10 @@ from inc.jira import (
 import inc.helpers
 from inc.helpers import t
 
+# New command system imports
+from inc.commands import initialize_commands
+from inc.core.command_handler import handle_input_new
+
 # Attempt to import Selenium, but allow the app to run without it.
 try:
     from selenium import webdriver
@@ -83,7 +87,8 @@ CACHE_DIR = os.path.join(SCRIPT_DIR, "cache")
 if not os.path.exists(CACHE_DIR):
     os.makedirs(CACHE_DIR)
 
-# -- Color Pairs --
+# -- Color Pairs -- 
+# TODO: These should eventually be imported from inc.utils.constants
 (COLOR_PAIR_DEFAULT, COLOR_PAIR_REVERSE, COLOR_PAIR_GREY, COLOR_PAIR_PAUSED,
  COLOR_PAIR_SELECTED, COLOR_PAIR_TASK_ALL_SUBTASKS_DONE, COLOR_PAIR_TASK_ALL_SUBTASKS_HIDDEN, COLOR_PAIR_URGENT_BOX,
  COLOR_PAIR_PR_UNHANDLED, COLOR_PAIR_PR_APPROVED, COLOR_PAIR_FOCUSED,
@@ -91,12 +96,14 @@ if not os.path.exists(CACHE_DIR):
 
 
 # -- Views --
+# TODO: These should eventually be imported from inc.utils.constants
 VIEW_MAIN = "main"
 VIEW_DEDICATED_NOTES = "dedicated_notes"
 VIEW_DAILY_NOTES = "daily_notes"
 VIEW_TIME_LOG = "time_log"
 VIEW_HOURLY_CHECKIN = "hourly_checkin"
 
+# TODO: This should be imported from inc.utils.constants
 WEEKDAY_MAP = {
     'ma': 0, 'mo': 0, 'ti': 1, 'tu': 1, 'ke': 2, 'we': 2,
     'to': 3, 'th': 3, 'pe': 4, 'fr': 4, 'la': 5, 'sa': 5,
@@ -850,7 +857,10 @@ def show_permanent_notification(stdscr):
     except curses.error: pass
     except Exception: pass
 
-def handle_input(data, command_parts, stdscr, current_view_mode, selected_subtask_idx, selected_note_idx, current_ticket_subtask_list, all_displayable_tickets_for_cmd):
+# DEPRECATED: This function has been replaced by the new command system
+# Use handle_input_new from inc.core.command_handler instead
+# TODO: Remove this function after confirming the new system works completely
+def handle_input_deprecated(data, command_parts, stdscr, current_view_mode, selected_subtask_idx, selected_note_idx, current_ticket_subtask_list, all_displayable_tickets_for_cmd):
     global web_change_notifications
     if current_view_mode != VIEW_MAIN:
         command = command_parts[0].lower() if command_parts else ""
@@ -2000,6 +2010,9 @@ def main(stdscr):
 
     app_data = load_data()
     load_jira_cache()
+    
+    # Initialize the new command system
+    initialize_commands()
 
     command_buffer = ""
 
@@ -2227,7 +2240,7 @@ def main(stdscr):
                     if cmd_parts:
                         with data_lock:
                             original_ticket = app_data.get("current_ticket")
-                            handle_result = handle_input(app_data, cmd_parts, stdscr, current_view, selected_subtask_index, selected_note_index, current_ticket_subtask_list_visible, all_displayable_tickets_for_handle_input)
+                            handle_result = handle_input_new(app_data, cmd_parts, stdscr, current_view, selected_subtask_index, selected_note_index, current_ticket_subtask_list_visible, all_displayable_tickets_for_handle_input)
                         if handle_result is None: break
                         elif handle_result == "RESTART_FOR_LOGIN":
                             permanent_notifications = []
