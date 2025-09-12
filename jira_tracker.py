@@ -1580,6 +1580,13 @@ def send_desktop_notification(title, message):
     except (FileNotFoundError, subprocess.CalledProcessError) as e:
         print(f"Could not send notification: {e}", file=sys.stderr)
 
+def focus_window(window_title):
+    """Focuses the terminal window with the given title using xdotool."""
+    try:
+        subprocess.run(['/usr/bin/xdotool', 'search', '--name', window_title, 'windowactivate'], capture_output=True, check=True)
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        pass # Silently fail if xdotool is not available or fails
+
 def poll_reviews_needed():
     """Polls for pull requests that need the user's review."""
     global pull_requests_for_review, sent_review_notifications
@@ -1813,11 +1820,6 @@ def event_notification_poller(data_lock, data_ref):
         except (ValueError, KeyError, TypeError):
             return None
 
-    def focus_window(window_title):
-        try:
-            subprocess.run(['/usr/bin/xdotool', 'search', '--name', window_title, 'windowactivate'], capture_output=True, check=True)
-        except (FileNotFoundError, subprocess.CalledProcessError):
-            pass # Silently fail if xdotool is not available or fails
 
     def open_link_in_browser(url, browser_cmd):
         try:
@@ -2050,6 +2052,19 @@ def main(stdscr):
                 selected_checkin_task_index = -1  # Reset selection
                 command_buffer = ""
                 request_full_redraw = True
+                
+                # Send desktop notification to get user's attention
+                pending_checkin = app_data.get("pending_checkin", {})
+                duration_seconds = pending_checkin.get("duration_seconds", 3600)
+                duration_minutes = duration_seconds // 60
+                notification_title = "⏰ Hourly Check-in Time!"
+                notification_body = f"Please account for the last {duration_minutes} minutes. What were you working on?"
+                send_desktop_notification(notification_title, notification_body)
+                
+                # Focus the terminal window to get user's attention
+                window_title = inc.config_manager.config.get("NOTIFICATION_WINDOW_TITLE")
+                if window_title:
+                    focus_window(window_title)
 
             completed_tickets = app_data.get("completed_tickets", [])
             current_ticket_subtasks_unfiltered = app_data.get("sub_tasks", {}).get(ticket_name_at_loop_start, {}) if ticket_name_at_loop_start else {}
@@ -2369,6 +2384,21 @@ def main(stdscr):
                 if key in ['Y', 'y']:
                     # User worked on suggested task
                     with data_lock:
+                        # First, handle any currently running timer
+                        work_session = app_data.get("work_session", {})
+                        if work_session.get("active") and not work_session.get("paused"):
+                            if work_session.get("current_timer_start_ts") and app_data.get("focused_subtask"):
+                                elapsed_seconds = int(datetime.now().timestamp() - work_session["current_timer_start_ts"])
+                                if elapsed_seconds > 0:
+                                    from inc.time_tracker import add_time_entry
+                                    focused_ticket = app_data.get("focused_ticket")
+                                    focused_subtask = app_data.get("focused_subtask")
+                                    if focused_ticket and focused_subtask:
+                                        # Use the standardized format for time logging
+                                        normalized_subtask = f"[{focused_ticket}] {focused_subtask}"
+                                        add_time_entry(app_data, entry_type="task", subtask=normalized_subtask, seconds=elapsed_seconds)
+                        
+                        # Now log the time from the hourly check-in
                         pending = app_data.get("pending_checkin", {})
                         if pending:
                             duration_seconds = pending.get("duration_seconds", 3600)
@@ -2377,17 +2407,40 @@ def main(stdscr):
                                 from inc.time_tracker import add_time_entry
                                 add_time_entry(app_data, entry_type="task", subtask=suggested_subtask, seconds=duration_seconds)
                                 save_data(app_data)
-                            app_data["pending_checkin"] = None
-                            save_data(app_data)
+                                
+                                # Restart timer for the suggested subtask if work session is active
+                                if work_session.get("active") and not work_session.get("paused"):
+                                    work_session["current_timer_start_ts"] = datetime.now().timestamp()
+                                    work_session["last_activity_ts"] = datetime.now().timestamp()
+                            
+                        app_data["pending_checkin"] = None
+                        save_data(app_data)
                     current_view = VIEW_MAIN
                     selected_checkin_task_index = -1
                     command_buffer = ""; request_full_redraw = True
                 
                 elif key in ['S', 's']:
                     # User wants to select a different task - start selection mode
-                    # Get available tasks to ensure we have a valid starting index
-                    available_tasks = []
                     with data_lock:
+                        # First, log any currently running timer before entering selection mode
+                        work_session = app_data.get("work_session", {})
+                        if work_session.get("active") and not work_session.get("paused"):
+                            if work_session.get("current_timer_start_ts") and app_data.get("focused_subtask"):
+                                elapsed_seconds = int(datetime.now().timestamp() - work_session["current_timer_start_ts"])
+                                if elapsed_seconds > 0:
+                                    from inc.time_tracker import add_time_entry
+                                    focused_ticket = app_data.get("focused_ticket")
+                                    focused_subtask = app_data.get("focused_subtask")
+                                    if focused_ticket and focused_subtask:
+                                        # Use the standardized format for time logging
+                                        normalized_subtask = f"[{focused_ticket}] {focused_subtask}"
+                                        add_time_entry(app_data, entry_type="task", subtask=normalized_subtask, seconds=elapsed_seconds)
+                                
+                                # Stop the current timer since we're switching tasks
+                                work_session.pop("current_timer_start_ts", None)
+                        
+                        # Get available tasks to ensure we have a valid starting index
+                        available_tasks = []
                         current_ticket = app_data.get("current_ticket")
                         if current_ticket:
                             subtasks = app_data.get("sub_tasks", {}).get(current_ticket, {})
@@ -2413,6 +2466,23 @@ def main(stdscr):
                 elif key in ['B', 'b']:
                     # User was on break/meeting
                     with data_lock:
+                        # First, log any currently running timer before logging break time
+                        work_session = app_data.get("work_session", {})
+                        if work_session.get("active") and not work_session.get("paused"):
+                            if work_session.get("current_timer_start_ts") and app_data.get("focused_subtask"):
+                                elapsed_seconds = int(datetime.now().timestamp() - work_session["current_timer_start_ts"])
+                                if elapsed_seconds > 0:
+                                    from inc.time_tracker import add_time_entry
+                                    focused_ticket = app_data.get("focused_ticket")
+                                    focused_subtask = app_data.get("focused_subtask")
+                                    if focused_ticket and focused_subtask:
+                                        # Use the standardized format for time logging
+                                        normalized_subtask = f"[{focused_ticket}] {focused_subtask}"
+                                        add_time_entry(app_data, entry_type="task", subtask=normalized_subtask, seconds=elapsed_seconds)
+                            # Stop the current timer
+                            work_session.pop("current_timer_start_ts", None)
+                        
+                        # Now log the break time from the hourly check-in
                         pending = app_data.get("pending_checkin", {})
                         if pending:
                             duration_seconds = pending.get("duration_seconds", 3600)
@@ -2491,6 +2561,17 @@ def main(stdscr):
                                 from inc.time_tracker import add_time_entry
                                 add_time_entry(app_data, entry_type="task", subtask=selected_subtask, seconds=duration_seconds)
                                 save_data(app_data)
+                                
+                                # Start timer for the selected subtask if work session is active
+                                work_session = app_data.get("work_session", {})
+                                if work_session.get("active") and not work_session.get("paused"):
+                                    work_session["current_timer_start_ts"] = datetime.now().timestamp()
+                                    work_session["last_activity_ts"] = datetime.now().timestamp()
+                                    
+                                    # Update focus to the selected subtask
+                                    app_data["focused_ticket"] = selected_ticket
+                                    app_data["focused_subtask"] = selected_subtask
+                                    
                             app_data["pending_checkin"] = None
                             save_data(app_data)
                     

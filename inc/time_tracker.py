@@ -5,8 +5,8 @@ from typing import Dict, Any, Optional
 
 # This module encapsulates time tracking concerns: entries, work sessions, and hourly check-ins.
 
-DEFAULT_INTERVAL_MINUTES = 2
-DEFAULT_FORGETFUL_MINUTES = 1
+DEFAULT_INTERVAL_MINUTES = 30
+DEFAULT_FORGETFUL_MINUTES = 120
 
 
 def _now_ts() -> float:
