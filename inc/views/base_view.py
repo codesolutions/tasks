@@ -1,5 +1,6 @@
 import curses
 from datetime import timedelta
+from inc.utils.constants import COLOR_PAIR_REVERSE, COLOR_PAIR_PERMANENT_NOTIFICATION
 
 def _draw_wrapped_text(stdscr, text_to_draw, start_row, start_col,
                        max_width_for_text_line,
@@ -52,6 +53,28 @@ def format_timedelta_minutes(delta):
     hours, remainder = divmod(total_seconds, 3600)
     minutes, _ = divmod(remainder, 60)
     return f"{hours}h {minutes}m"
+
+def show_notification(stdscr, message):
+    """Show a temporary notification at the bottom of the screen."""
+    try:
+        height, width = stdscr.getmaxyx()
+        if height < 2 or width == 0:
+            return
+        notification_line = height - 2
+        message_to_show = message[:width - 2 if width > 2 else width]
+
+        stdscr.attron(curses.color_pair(COLOR_PAIR_REVERSE))
+        stdscr.addstr(notification_line, 0, " " * (width-1 if width > 0 else 0))
+        stdscr.addstr(notification_line, 0, message_to_show.ljust(width-1 if width > 0 else 0))
+        stdscr.attroff(curses.color_pair(COLOR_PAIR_REVERSE))
+        stdscr.refresh()
+        curses.napms(500)
+        stdscr.addstr(notification_line, 0, " " * (width-1 if width > 0 else 0))
+        show_permanent_notification(stdscr, [])
+        stdscr.refresh()
+    except curses.error:
+        pass
+
 
 def show_permanent_notification(stdscr, permanent_notifications):
     try:

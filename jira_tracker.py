@@ -35,8 +35,12 @@ from inc.core.command_handler import handle_input_new
 
 # Integrations
 from inc.integrations.notification_service import send_desktop_notification
-from inc.integrations.calendar_poller import calendar_poller
-from inc.integrations.web_monitor import web_monitor
+from inc.utils.formatters import focus_window
+from inc.integrations.calendar_poller import poll_external_calendar  
+from inc.integrations.web_monitor import poll_web_pages
+from inc.integrations.pr_monitor import poll_pull_requests, poll_reviews_needed
+from inc.integrations.event_poller import event_notification_poller
+from inc.views.base_view import show_notification, show_permanent_notification
 
 # JIRA integration
 from inc.jira import (
@@ -47,7 +51,7 @@ from inc.jira import (
 from inc.time_tracker import HourlyCheckinScheduler, note_user_activity
 
 # Utilities
-from inc.utils.formatters import format_subtask_for_title, focus_window
+from inc.utils.formatters import format_subtask_for_title
 
 # Views - UI rendering is now modularized
 from inc.views.main_view import display_main_view
@@ -72,6 +76,11 @@ reviews_lock = threading.Lock()
 sent_review_notifications = set()
 permanent_notifications = []
 app_data = {}
+
+# External calendar integration
+external_meetings = []
+external_meetings_lock = threading.Lock()
+web_change_notifications = []
 
 
 def initialize_application():
@@ -149,72 +158,7 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
     )
 
 
-def show_notification(stdscr, message):
-    """Show a temporary notification at the bottom of the screen."""
-    try:
-        height, width = stdscr.getmaxyx()
-        if height < 2 or width == 0:
-            return
-        notification_line = height - 2
-        message_to_show = message[:width - 2 if width > 2 else width]
-
-        stdscr.attron(curses.color_pair(COLOR_PAIR_REVERSE))
-        stdscr.addstr(notification_line, 0, " " * (width-1 if width > 0 else 0))
-        stdscr.addstr(notification_line, 0, message_to_show.ljust(width-1 if width > 0 else 0))
-        stdscr.attroff(curses.color_pair(COLOR_PAIR_REVERSE))
-        stdscr.refresh()
-        curses.napms(500)
-        stdscr.addstr(notification_line, 0, " " * (width-1 if width > 0 else 0))
-        show_permanent_notification(stdscr)
-        stdscr.refresh()
-    except curses.error:
-        pass
-
-
-def show_permanent_notification(stdscr):
-    """Show permanent notifications (login errors, etc.)."""
-    global permanent_notifications
-    try:
-        height, width = stdscr.getmaxyx()
-        if height < 2 or width == 0:
-            return
-        notification_line = height - 2
-
-        row = 1
-        if permanent_notifications:
-            for msg in permanent_notifications:
-                stdscr.addstr(notification_line, 0, " " * (width-1 if width > 0 else 0))
-                stdscr.addstr(notification_line, 0, f"{row}. {msg[:width-3]}", 
-                            curses.color_pair(COLOR_PAIR_PERMANENT_NOTIFICATION) | curses.A_BOLD)
-                row += 1
-        stdscr.refresh()
-    except curses.error:
-        pass
-
-
-def poll_pull_requests(data_lock, data_ref):
-    """Poll for pull request status updates (legacy function - should be moved to integrations)."""
-    # This is a complex function that should be moved to inc/integrations/pr_monitor.py
-    # For now, keeping it here to avoid breaking the application
-    # TODO: Move to proper integration module
-    
-    # Legacy implementation continues to work
-    # (The actual implementation would be here but it's too long to include in this clean version)
-    time.sleep(300)  # Sleep and continue
-
-
-def poll_reviews_needed():
-    """Poll for reviews needed (legacy function - should be moved to integrations).""" 
-    # This should also be moved to inc/integrations/review_monitor.py
-    # TODO: Refactor to proper integration module
-    time.sleep(300)
-
-
-def event_notification_poller(data_lock, data_ref):
-    """Poll for upcoming events and send notifications (legacy function)."""
-    # This should be moved to inc/integrations/event_monitor.py
-    # TODO: Refactor to proper integration module
-    time.sleep(60)
+# All utility functions are now imported from their respective modules
 
 
 def main(stdscr):
@@ -295,11 +239,11 @@ def main(stdscr):
     review_polling_thread.start()
     
     # Start modular services
-    calendar_poller.start()
-    web_monitor.start(
-        notification_callback=send_desktop_notification,
-        data_save_callback=lambda: data_manager.save_data(app_data)
-    )
+    calendar_polling_thread = threading.Thread(target=poll_external_calendar, daemon=True)
+    calendar_polling_thread.start()
+    
+    web_polling_thread = threading.Thread(target=poll_web_pages, daemon=True)
+    web_polling_thread.start()
     
     # Main application loop - much cleaner now!
     clock_refresh_interval = 1.0
