@@ -36,8 +36,8 @@ from inc.core.command_handler import handle_input_new
 # Integrations
 from inc.integrations.notification_service import send_desktop_notification
 from inc.utils.formatters import focus_window
-from inc.integrations.calendar_poller import poll_external_calendar  
-from inc.integrations.web_monitor import poll_web_pages
+from inc.integrations.calendar_poller import calendar_poller
+from inc.integrations.web_monitor import web_monitor
 from inc.integrations.pr_monitor import poll_pull_requests, poll_reviews_needed
 from inc.integrations.event_poller import event_notification_poller
 from inc.views.base_view import show_notification, show_permanent_notification
@@ -153,8 +153,8 @@ def display_ui(stdscr, data, command_buffer="", full_redraw=False, selected_subt
         current_view_mode, entity_for_dedicated_notes, 
         current_ticket_subtask_list_for_display_arg, show_help_footer, 
         current_date_for_daily_notes_arg, selected_note_idx, 
-        jira_cache, jira_cache_lock, reviews_lock, None, notes_scroll_offset,
-        pull_requests_for_review, permanent_notifications, [], []
+        jira_cache, jira_cache_lock, reviews_lock, external_meetings_lock, notes_scroll_offset,
+        pull_requests_for_review, permanent_notifications, web_change_notifications, external_meetings
     )
 
 
@@ -239,11 +239,8 @@ def main(stdscr):
     review_polling_thread.start()
     
     # Start modular services
-    calendar_polling_thread = threading.Thread(target=poll_external_calendar, daemon=True)
-    calendar_polling_thread.start()
-    
-    web_polling_thread = threading.Thread(target=poll_web_pages, daemon=True)
-    web_polling_thread.start()
+    calendar_poller.start()
+    web_monitor.start()
     
     # Main application loop - much cleaner now!
     clock_refresh_interval = 1.0
