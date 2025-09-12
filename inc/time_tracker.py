@@ -264,18 +264,20 @@ class HourlyCheckinScheduler:
                             if last_check is None:
                                 self.data_ref["last_checkin_ts"] = now_ts
                             elif now_ts - last_check >= interval_min * 60:
-                                # schedule a check-in with actual elapsed time since last check
-                                duration = int(now_ts - last_check)
-                                suggested = None
-                                if self.data_ref.get("focused_subtask") and self.data_ref.get("focused_ticket"):
-                                    suggested = f"[{self.data_ref.get('focused_ticket')}] {self.data_ref.get('focused_subtask')}"
-                                self.data_ref["pending_checkin"] = {
-                                    "duration_seconds": duration,
-                                    "started_at": _utc_iso_now(),
-                                    "suggested_subtask": suggested
-                                }
-                                # mark last_checkin_ts to now to avoid retrigger
-                                self.data_ref["last_checkin_ts"] = now_ts
+                                # Only create a new check-in if there isn't already one pending
+                                if not self.data_ref.get("pending_checkin"):
+                                    # schedule a check-in with actual elapsed time since last check
+                                    duration = int(now_ts - last_check)
+                                    suggested = None
+                                    if self.data_ref.get("focused_subtask") and self.data_ref.get("focused_ticket"):
+                                        suggested = f"[{self.data_ref.get('focused_ticket')}] {self.data_ref.get('focused_subtask')}"
+                                    self.data_ref["pending_checkin"] = {
+                                        "duration_seconds": duration,
+                                        "started_at": _utc_iso_now(),
+                                        "suggested_subtask": suggested
+                                    }
+                                    # mark last_checkin_ts to now to avoid retrigger
+                                    self.data_ref["last_checkin_ts"] = now_ts
                 # sleep small increments to be responsive but not busy-wait
                 self._stop.wait(5.0)
             except Exception:
