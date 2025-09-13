@@ -24,21 +24,33 @@ def display_hourly_checkin_view(stdscr, data, selected_task_index=-1):
     row = 1
     # Show current time dynamically - this gets updated on each render
     current_time_str = datetime.now().strftime('%H:%M:%S')
-    stdscr.addstr(row, 2, f"Time for your hourly check-in! (Current time: {current_time_str})")
+    stdscr.addstr(row, 2, f"⏰ Time for your check-in! (Current time: {current_time_str})")
     row += 1
     
-    # Show when the period started for clarity
+    # Calculate and show the actual work period being tracked
     started_at = pending_checkin.get("started_at")
     if started_at:
         try:
-            # Parse the ISO timestamp and show when tracking started
+            # Parse the UTC timestamp and convert to local time for comparison
             start_dt = datetime.fromisoformat(started_at.replace('Z', '+00:00'))
-            stdscr.addstr(row, 2, f"Tracking period: {start_dt.strftime('%H:%M')} - {current_time_str} ({duration_str})")
+            # Convert UTC time to local time for accurate comparison
+            start_local = start_dt.astimezone().replace(tzinfo=None)
+            # Calculate actual elapsed time from when checkin was created to now (both in local time)
+            actual_elapsed = (datetime.now() - start_local).total_seconds()
+            actual_duration_str = format_timedelta_minutes(timedelta(seconds=int(actual_elapsed)))
+            
+            stdscr.addstr(row, 2, f"📊 Work period: {start_local.strftime('%H:%M')} → {current_time_str} ({actual_duration_str})")
+            row += 1
+            if abs(actual_elapsed - duration_seconds) > 60:  # If difference > 1 minute
+                stdscr.addstr(row, 2, f"   (Originally detected: {duration_str})")
+                row += 1
         except (ValueError, AttributeError):
-            stdscr.addstr(row, 2, f"Please account for the last {duration_str}.")
+            stdscr.addstr(row, 2, f"📊 Please account for approximately {duration_str} of work.")
+            row += 1
     else:
-        stdscr.addstr(row, 2, f"Please account for the last {duration_str}.")
-    row += 2
+        stdscr.addstr(row, 2, f"📊 Please account for approximately {duration_str} of work.")
+        row += 1
+    row += 1
 
     if suggested_subtask:
         stdscr.addstr(row, 2, "Were you working on your focused subtask?")
@@ -123,7 +135,7 @@ def display_hourly_checkin_view(stdscr, data, selected_task_index=-1):
         
         row += 1
     
-    stdscr.addstr(height - 1, 2, "Press ESC to cancel this check-in.")
+    stdscr.addstr(height - 1, 2, "Press ESC or ENTER to cancel this check-in.")
     stdscr.refresh()
     
     return available_tasks if selected_task_index >= 0 else []

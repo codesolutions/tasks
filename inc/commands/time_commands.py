@@ -54,6 +54,7 @@ class EndDayCommand(BaseCommand):
             )
         
         # Log any remaining time if there's an active timer
+        last_entry_logged = False
         if work_session.get("current_timer_start_ts") and data.get("focused_subtask"):
             elapsed_seconds = int(datetime.now().timestamp() - work_session["current_timer_start_ts"])
             if elapsed_seconds > 0:
@@ -63,17 +64,75 @@ class EndDayCommand(BaseCommand):
                 if focused_ticket and focused_subtask:
                     normalized_subtask = f"[{focused_ticket}] {focused_subtask}"
                     add_time_entry(data, entry_type="task", subtask=normalized_subtask, seconds=elapsed_seconds)
+                    last_entry_logged = True
         
+        # Properly end work session and clear all timers
         work_session["active"] = False
         work_session["end_time"] = datetime.now().isoformat()
         work_session.pop("current_timer_start_ts", None)
+        work_session.pop("last_activity_ts", None)  # Clear to prevent scheduler from auto-ending again
+        work_session.pop("paused", None)
+        
+        # Clear any pending check-ins to prevent scheduler from creating new ones
+        data["pending_checkin"] = None
+        
+        # Clear focus since work day is ending
+        data["focused_ticket"] = None
+        data["focused_subtask"] = None
+        
+        # Prompt for comment on last entry if one was just logged
+        if last_entry_logged:
+            self._prompt_for_last_entry_comment(context.stdscr, data)
+        
+        # Show daily summary after ending the day
+        from inc.views.daily_summary_view import show_daily_summary
+        show_daily_summary(context.stdscr, data, auto_end=False)
         
         return CommandResult(
             success=True,
             data_modified=True,
             message=t('work_session_ended'),
-            request_redraw=True
+            request_redraw=False  # Don't redraw immediately, summary handled it
         )
+    
+    def _prompt_for_last_entry_comment(self, stdscr, data):
+        """Prompt user to add a comment to the last time entry."""
+        import curses
+        
+        height, width = stdscr.getmaxyx()
+        stdscr.clear()
+        
+        stdscr.addstr(1, 2, "💭 Add a comment to your last work session?")
+        stdscr.addstr(3, 2, "Comment (or press ENTER to skip):")
+        stdscr.addstr(4, 2, "> ")
+        
+        # Enable cursor and echo for input
+        curses.curs_set(1)
+        curses.echo()
+        stdscr.refresh()
+        
+        try:
+            # Get user input
+            comment = stdscr.getstr(4, 4, width - 10).decode('utf-8').strip()
+            
+            if comment:
+                from inc.time_tracker import add_comment_to_latest_entry
+                success = add_comment_to_latest_entry(data, comment)
+                if success:
+                    stdscr.addstr(6, 2, f"✓ Comment added: {comment[:50]}..." if len(comment) > 50 else f"✓ Comment added: {comment}")
+                else:
+                    stdscr.addstr(6, 2, "❌ Failed to add comment to latest entry")
+                stdscr.addstr(7, 2, "Press any key to continue...")
+                stdscr.refresh()
+                stdscr.getch()
+        
+        except (curses.error, UnicodeDecodeError):
+            pass  # Skip comment if there's an error
+        
+        finally:
+            # Restore normal curses settings
+            curses.noecho()
+            curses.curs_set(0)
     
     def get_usage(self) -> str:
         return "endday - End the current work day session"

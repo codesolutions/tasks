@@ -255,51 +255,57 @@ class HourlyCheckinScheduler:
                         now_ts = _now_ts()
                         ws = self.data_ref.get("work_session", {})
                         last_activity = ws.get("last_activity_ts")
-                        # Auto-end work day if no recent activity
-                        if last_activity and (now_ts - last_activity) > forget_min * 60:
+                        # Auto-end work day if no recent activity AND work session is still active
+                        if last_activity and (now_ts - last_activity) > forget_min * 60 and ws.get("active"):
                             # User has been idle too long - automatically end work day
-                            ws = self.data_ref.get("work_session", {})
-                            if ws.get("active"):
-                                # Log any remaining time if there's an active timer
-                                if ws.get("current_timer_start_ts") and self.data_ref.get("focused_subtask"):
-                                    # Calculate elapsed time up to when user went idle
-                                    elapsed_seconds = int(last_activity - ws["current_timer_start_ts"])
-                                    if elapsed_seconds > 0:
-                                        focused_ticket = self.data_ref.get("focused_ticket")
-                                        focused_subtask = self.data_ref.get("focused_subtask")
-                                        if focused_ticket and focused_subtask:
-                                            # Use the standardized format for time logging
-                                            normalized_subtask = f"[{focused_ticket}] {focused_subtask}"
-                                            add_time_entry(self.data_ref, entry_type="task", subtask=normalized_subtask, seconds=elapsed_seconds)
-                                
-                                # End the work session
-                                ws["active"] = False
-                                ws["end_time"] = _utc_iso_now()
-                                ws.pop("current_timer_start_ts", None)
-                                ws.pop("paused", None)  # Clear paused state if any
+                            # Log any remaining time if there's an active timer
+                            if ws.get("current_timer_start_ts") and self.data_ref.get("focused_subtask"):
+                                # Calculate elapsed time up to when user went idle
+                                elapsed_seconds = int(last_activity - ws["current_timer_start_ts"])
+                                if elapsed_seconds > 0:
+                                    focused_ticket = self.data_ref.get("focused_ticket")
+                                    focused_subtask = self.data_ref.get("focused_subtask")
+                                    if focused_ticket and focused_subtask:
+                                        # Use the standardized format for time logging
+                                        normalized_subtask = f"[{focused_ticket}] {focused_subtask}"
+                                        add_time_entry(self.data_ref, entry_type="task", subtask=normalized_subtask, seconds=elapsed_seconds)
+                            
+                            # End the work session
+                            ws["active"] = False
+                            ws["end_time"] = _utc_iso_now()
+                            ws.pop("current_timer_start_ts", None)
+                            ws.pop("paused", None)  # Clear paused state if any
                             
                             # Clear any pending check-in since we're ending the day
                             self.data_ref["pending_checkin"] = None
                             self.data_ref["last_checkin_ts"] = now_ts
+                            
+                            # Set flag to show daily summary on next UI refresh
+                            self.data_ref["show_auto_end_summary"] = True
                         else:
-                            last_check = self.data_ref.get("last_checkin_ts")
-                            if last_check is None:
-                                self.data_ref["last_checkin_ts"] = now_ts
-                            elif now_ts - last_check >= interval_min * 60:
-                                # Only create a new check-in if there isn't already one pending
-                                if not self.data_ref.get("pending_checkin"):
-                                    # schedule a check-in with actual elapsed time since last check
-                                    duration = int(now_ts - last_check)
-                                    suggested = None
-                                    if self.data_ref.get("focused_subtask") and self.data_ref.get("focused_ticket"):
-                                        suggested = f"[{self.data_ref.get('focused_ticket')}] {self.data_ref.get('focused_subtask')}"
-                                    self.data_ref["pending_checkin"] = {
-                                        "duration_seconds": duration,
-                                        "started_at": _utc_iso_now(),
-                                        "suggested_subtask": suggested
-                                    }
-                                    # mark last_checkin_ts to now to avoid retrigger
+                            # Only create check-ins if work session is still active
+                            if not ws.get("active"):
+                                # Work session ended, don't create check-ins
+                                pass
+                            else:
+                                last_check = self.data_ref.get("last_checkin_ts")
+                                if last_check is None:
                                     self.data_ref["last_checkin_ts"] = now_ts
+                                elif now_ts - last_check >= interval_min * 60:
+                                    # Only create a new check-in if there isn't already one pending
+                                    if not self.data_ref.get("pending_checkin"):
+                                        # schedule a check-in with actual elapsed time since last check
+                                        duration = int(now_ts - last_check)
+                                        suggested = None
+                                        if self.data_ref.get("focused_subtask") and self.data_ref.get("focused_ticket"):
+                                            suggested = f"[{self.data_ref.get('focused_ticket')}] {self.data_ref.get('focused_subtask')}"
+                                        self.data_ref["pending_checkin"] = {
+                                            "duration_seconds": duration,
+                                            "started_at": _utc_iso_now(),
+                                            "suggested_subtask": suggested
+                                        }
+                                        # mark last_checkin_ts to now to avoid retrigger
+                                        self.data_ref["last_checkin_ts"] = now_ts
                 # sleep small increments to be responsive but not busy-wait
                 self._stop.wait(5.0)
             except Exception:

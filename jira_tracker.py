@@ -304,8 +304,23 @@ def main(stdscr):
             ])
         
         with data_lock:
-            # Handle hourly check-in
-            if app_data.get("pending_checkin") and current_view == VIEW_MAIN:
+            # Handle auto-end daily summary (takes priority over everything else)
+            if app_data.get("show_auto_end_summary"):
+                from inc.views.daily_summary_view import show_daily_summary
+                show_daily_summary(stdscr, app_data, auto_end=True)
+                app_data.pop("show_auto_end_summary", None)  # Clear the flag
+                data_manager.save_data(app_data)
+                
+                # If we were in check-in view, return to main
+                if current_view == VIEW_HOURLY_CHECKIN:
+                    current_view = VIEW_MAIN
+                    selected_checkin_task_index = -1
+                    command_buffer = ""
+                
+                request_full_redraw = True
+            
+            # Handle hourly check-in (only if not in other views and no auto-end summary)
+            elif app_data.get("pending_checkin") and current_view == VIEW_MAIN:
                 current_view = VIEW_HOURLY_CHECKIN
                 selected_checkin_task_index = -1
                 command_buffer = ""
@@ -767,42 +782,48 @@ def main(stdscr):
                         selected_checkin_task_index += 1
                     request_full_redraw = True
                 
-                elif key in ['\n', curses.KEY_ENTER] and selected_checkin_task_index >= 0:
-                    # User confirmed selection of a task
-                    available_tasks = []
-                    with data_lock:
-                        from inc.time_tracker import add_time_entry, start_focus_timer
-                        
-                        current_ticket = app_data.get("current_ticket")
-                        if current_ticket:
-                            subtasks = app_data.get("sub_tasks", {}).get(current_ticket, {})
-                            for sub_name, sub_details in subtasks.items():
-                                if isinstance(sub_details, dict) and sub_details.get("status") != "hidden":
-                                    available_tasks.append((current_ticket, sub_name))
-                        
-                        # Add paused tasks
-                        for paused_task in app_data.get("paused_tasks", []):
-                            ticket_name = paused_task.get("ticket")
-                            if ticket_name:
-                                subtasks = paused_task.get("sub_tasks", {})
+                elif key in ['\n', curses.KEY_ENTER]:
+                    if selected_checkin_task_index >= 0:
+                        # User confirmed selection of a task
+                        available_tasks = []
+                        with data_lock:
+                            from inc.time_tracker import add_time_entry, start_focus_timer
+                            
+                            current_ticket = app_data.get("current_ticket")
+                            if current_ticket:
+                                subtasks = app_data.get("sub_tasks", {}).get(current_ticket, {})
                                 for sub_name, sub_details in subtasks.items():
                                     if isinstance(sub_details, dict) and sub_details.get("status") != "hidden":
-                                        available_tasks.append((ticket_name, sub_name))
-                        
-                        if 0 <= selected_checkin_task_index < len(available_tasks):
-                            selected_ticket, selected_subtask = available_tasks[selected_checkin_task_index]
-                            pending = app_data.get("pending_checkin", {})
-                            if pending:
-                                duration_seconds = pending.get("duration_seconds", 3600)
-                                # Use the actual subtask identifier, which will be normalized by add_time_entry
-                                add_time_entry(app_data, entry_type="task", subtask=selected_subtask, seconds=duration_seconds)
-                                data_manager.save_data(app_data)
-                                
-                                # Update focus to the selected subtask and start timer
-                                app_data["focused_ticket"] = selected_ticket
-                                app_data["focused_subtask"] = selected_subtask
-                                start_focus_timer(app_data)
+                                        available_tasks.append((current_ticket, sub_name))
                             
+                            # Add paused tasks
+                            for paused_task in app_data.get("paused_tasks", []):
+                                ticket_name = paused_task.get("ticket")
+                                if ticket_name:
+                                    subtasks = paused_task.get("sub_tasks", {})
+                                    for sub_name, sub_details in subtasks.items():
+                                        if isinstance(sub_details, dict) and sub_details.get("status") != "hidden":
+                                            available_tasks.append((ticket_name, sub_name))
+                            
+                            if 0 <= selected_checkin_task_index < len(available_tasks):
+                                selected_ticket, selected_subtask = available_tasks[selected_checkin_task_index]
+                                pending = app_data.get("pending_checkin", {})
+                                if pending:
+                                    duration_seconds = pending.get("duration_seconds", 3600)
+                                    # Use the actual subtask identifier, which will be normalized by add_time_entry
+                                    add_time_entry(app_data, entry_type="task", subtask=selected_subtask, seconds=duration_seconds)
+                                    data_manager.save_data(app_data)
+                                    
+                                    # Update focus to the selected subtask and start timer
+                                    app_data["focused_ticket"] = selected_ticket
+                                    app_data["focused_subtask"] = selected_subtask
+                                    start_focus_timer(app_data)
+                                
+                                app_data["pending_checkin"] = None
+                                data_manager.save_data(app_data)
+                    else:
+                        # User pressed Enter without selecting a task - cancel the check-in
+                        with data_lock:
                             app_data["pending_checkin"] = None
                             data_manager.save_data(app_data)
                     

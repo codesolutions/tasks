@@ -96,8 +96,8 @@ class AddSubtaskCommand(BaseCommand):
             # Start new timer for the focused subtask
             start_focus_timer(data)
             
-            # Update last checkin timestamp to reset the timer
-            data["last_checkin_ts"] = time.time()
+            # Don't reset checkin timer when switching focus within active work - 
+            # let the scheduler handle check-ins based on actual elapsed time
             
             if switch_message:
                 message = t('cmd_info_subtask_added_with_switch',
@@ -299,10 +299,11 @@ class FocusSubtaskCommand(BaseCommand):
         if old_focused_ticket and old_focused_subtask:
             stop_focus_timer_and_log(data)
         
-        # Unfocus all other subtasks in the current ticket
-        for st_name, st_details in data["sub_tasks"][current_ticket].items():
-            if st_details.get("status") == "focused":
-                st_details["status"] = "todo"
+        # Unfocus all subtasks across all projects (not just current ticket)
+        for ticket_subtasks in data["sub_tasks"].values():
+            for st in ticket_subtasks.values():
+                if isinstance(st, dict) and st.get("status") == "focused":
+                    st["status"] = "todo"
         
         if current_status == "focused":
             # Unfocus the subtask
@@ -321,8 +322,8 @@ class FocusSubtaskCommand(BaseCommand):
             
             message = t('cmd_info_subtask_focus_set', name=subtask_name)
         
-        # Reset checkin timer when focus changes
-        data["last_checkin_ts"] = time.time()
+        # Don't reset checkin timer on focus toggle - maintain continuous work tracking
+        # Only the scheduler should manage check-in timing based on actual work periods
         
         return CommandResult(
             success=True,
@@ -358,8 +359,8 @@ class FocusCommand(BaseCommand):
                     if isinstance(st, dict) and st.get("status") == "focused":
                         st["status"] = "todo"
             
-            # Reset checkin timer when focus cleared
-            data["last_checkin_ts"] = time.time()
+            # Don't automatically reset checkin timer when clearing focus
+            # Let the user explicitly end their work day or let the scheduler handle idle timeout
             
             return CommandResult(
                 success=True,
@@ -441,8 +442,8 @@ class FocusCommand(BaseCommand):
                 # Start new timer for the focused subtask
                 start_focus_timer(data)
             
-            # Reset checkin timer when focus changes
-            data["last_checkin_ts"] = time.time()
+            # Don't reset checkin timer when changing focus during active work
+            # This allows proper time tracking across focus changes
             
             return CommandResult(
                 success=True,
