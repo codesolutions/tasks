@@ -166,9 +166,13 @@ def get_total_seconds_for_date(data: Dict[str, Any], entry_date_iso: str) -> int
 def start_focus_timer(data: Dict[str, Any]) -> None:
     ensure_time_tracking_defaults(data)
     ws = data["work_session"]
-    ws["active"] = True
-    ws["current_timer_start_ts"] = _now_ts()
-    ws["last_activity_ts"] = _now_ts()
+    
+    # Only start the timer if work session is already active
+    # This prevents timing when a user hasn't explicitly started their work day
+    if ws.get("active"):
+        ws["current_timer_start_ts"] = _now_ts()
+        ws["last_activity_ts"] = _now_ts()
+    # Note: We don't set active=True here anymore - that should only happen in StartDayCommand
 
 
 def stop_focus_timer_and_log(data: Dict[str, Any]) -> None:
@@ -294,14 +298,21 @@ class HourlyCheckinScheduler:
                                 elif now_ts - last_check >= interval_min * 60:
                                     # Only create a new check-in if there isn't already one pending
                                     if not self.data_ref.get("pending_checkin"):
-                                        # schedule a check-in with actual elapsed time since last check
-                                        duration = int(now_ts - last_check)
+                                        # Get the actual timer start time for accurate duration calculation
+                                        timer_start = ws.get("current_timer_start_ts")
+                                        if timer_start:
+                                            # Calculate actual time worked since timer started
+                                            actual_work_duration = int(now_ts - timer_start)
+                                        else:
+                                            # Fallback to time since last check if no timer
+                                            actual_work_duration = int(now_ts - last_check)
+                                        
                                         suggested = None
                                         if self.data_ref.get("focused_subtask") and self.data_ref.get("focused_ticket"):
                                             suggested = f"[{self.data_ref.get('focused_ticket')}] {self.data_ref.get('focused_subtask')}"
+                                        
                                         self.data_ref["pending_checkin"] = {
-                                            "duration_seconds": duration,
-                                            "started_at": _utc_iso_now(),
+                                            "timer_start_ts": timer_start or last_check,  # Store original start time for UI display
                                             "suggested_subtask": suggested
                                         }
                                         # mark last_checkin_ts to now to avoid retrigger

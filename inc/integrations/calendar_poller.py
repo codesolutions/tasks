@@ -61,6 +61,13 @@ class CalendarPoller:
     
     def _poll_loop(self):
         """Main polling loop running in background thread."""
+        # Do an immediate fetch on startup
+        try:
+            self._fetch_meetings()
+        except Exception as e:
+            print(f"Calendar initial polling error: {e}")
+        
+        # Then continue with regular polling interval
         while not self._stop_event.wait(CALENDAR_POLL_INTERVAL):
             try:
                 self._fetch_meetings()
@@ -73,7 +80,7 @@ class CalendarPoller:
             return
         
         try:
-            response = requests.get(self._calendar_url, timeout=20)
+            response = requests.get(self._calendar_url, timeout=20, allow_redirects=True)
             response.raise_for_status()
             
             csv_data = response.text

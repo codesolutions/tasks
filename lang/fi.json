@@ -95,6 +95,7 @@
     "cmd_info_task_completed_and_hidden": "Tiketti '{name}' merkitty valmiiksi ja piilotettu.",
     "cmd_info_focus_set": "Fokus asetettu tikettiin: {name}",
     "cmd_info_subtask_focus_set": "Fokus asetettu alatehtävään: {name}",
+    "cmd_info_subtask_focus_set_no_timer": "Fokus asetettu alatehtävään: {name} (ajastin ei käynnistetty - aja 'startday' aloittaaksesi ajastuksen)",
     "cmd_info_focus_cleared": "Fokus poistettu.",
     "cmd_err_time_processing": "Virhe ajan käsittelyssä: {e}",
     "cmd_err_no_active_task_to_complete": "Ei aktiivista tikettiä valmiiksi merkitsemiseksi.",

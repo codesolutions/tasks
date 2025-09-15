@@ -51,6 +51,17 @@ def display_dedicated_notes_view(stdscr, data, command_buffer, entity_for_notes,
             from inc.helpers import get_jira_ticket_from_url
             jira_ticket_id = get_jira_ticket_from_url(entity_name)
             cached_item = cache_copy.get(jira_ticket_id, {})
+            
+            # Mark Jira/Trello comments as read when opening this view
+            if jira_cache and jira_cache_lock and jira_ticket_id:
+                with jira_cache_lock:
+                    if jira_ticket_id in jira_cache:
+                        if jira_cache[jira_ticket_id].get('new_jira_comment') or jira_cache[jira_ticket_id].get('new_trello_comment'):
+                            jira_cache[jira_ticket_id]['new_jira_comment'] = False
+                            jira_cache[jira_ticket_id]['new_trello_comment'] = False
+                            # Save the updated cache
+                            from inc.jira import save_jira_cache
+                            save_jira_cache(jira_cache, jira_cache_lock)
 
             if cached_item:
                 # Get task info

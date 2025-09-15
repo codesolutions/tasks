@@ -39,7 +39,7 @@ LOG_FORMAT = '%(asctime)s,%(msecs)03d %(name)s %(levelname)s %(message)s'
 LOG_DATE_FORMAT = '%Y-%m-%d %H:%M:%S'
 
 # -- Polling Intervals --
-CALENDAR_POLL_INTERVAL = 3600  # 1 hour in seconds
+CALENDAR_POLL_INTERVAL = 1800  # 30 minutes in seconds
 DEFAULT_WEB_MONITORING_INTERVAL = 30  # minutes
 
 # -- Default Values --

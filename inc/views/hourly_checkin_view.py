@@ -15,11 +15,20 @@ def display_hourly_checkin_view(stdscr, data, selected_task_index=-1):
         stdscr.refresh()
         return
     
-    duration_seconds = pending_checkin.get("duration_seconds", 3600)
+    timer_start_ts = pending_checkin.get("timer_start_ts")
     suggested_subtask = pending_checkin.get("suggested_subtask")
     
     now = datetime.now()
-    duration_str = format_timedelta_minutes(timedelta(seconds=duration_seconds))
+    now_ts = now.timestamp()
+    
+    # Calculate actual time worked since timer started
+    if timer_start_ts:
+        actual_work_seconds = int(now_ts - timer_start_ts)
+    else:
+        # Fallback - shouldn't happen with new system
+        actual_work_seconds = pending_checkin.get("duration_seconds", 3600)
+    
+    duration_str = format_timedelta_minutes(timedelta(seconds=actual_work_seconds))
     
     row = 1
     # Show current time dynamically - this gets updated on each render
@@ -28,22 +37,13 @@ def display_hourly_checkin_view(stdscr, data, selected_task_index=-1):
     row += 1
     
     # Calculate and show the actual work period being tracked
-    started_at = pending_checkin.get("started_at")
-    if started_at:
+    if timer_start_ts:
         try:
-            # Parse the UTC timestamp and convert to local time for comparison
-            start_dt = datetime.fromisoformat(started_at.replace('Z', '+00:00'))
-            # Convert UTC time to local time for accurate comparison
-            start_local = start_dt.astimezone().replace(tzinfo=None)
-            # Calculate actual elapsed time from when checkin was created to now (both in local time)
-            actual_elapsed = (datetime.now() - start_local).total_seconds()
-            actual_duration_str = format_timedelta_minutes(timedelta(seconds=int(actual_elapsed)))
+            start_time = datetime.fromtimestamp(timer_start_ts)
+            start_time_str = start_time.strftime('%H:%M')
             
-            stdscr.addstr(row, 2, f"📊 Work period: {start_local.strftime('%H:%M')} → {current_time_str} ({actual_duration_str})")
+            stdscr.addstr(row, 2, f"📊 Work period: {start_time_str} → {current_time_str} ({duration_str})")
             row += 1
-            if abs(actual_elapsed - duration_seconds) > 60:  # If difference > 1 minute
-                stdscr.addstr(row, 2, f"   (Originally detected: {duration_str})")
-                row += 1
         except (ValueError, AttributeError):
             stdscr.addstr(row, 2, f"📊 Please account for approximately {duration_str} of work.")
             row += 1

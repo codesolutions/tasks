@@ -95,6 +95,7 @@
     "cmd_info_task_completed_and_hidden": "Project '{name}' marked as complete and hidden.",
     "cmd_info_focus_set": "Focus set on project: {name}",
     "cmd_info_subtask_focus_set": "Focus set on ticket: {name}",
+    "cmd_info_subtask_focus_set_no_timer": "Focus set on ticket: {name} (timer not started - run 'startday' to begin timing)",
     "cmd_info_focus_cleared": "Focus cleared.",
     "cmd_err_time_processing": "Error processing time: {e}",
     "cmd_err_no_active_task_to_complete": "No active project to mark as complete.",

@@ -93,8 +93,10 @@ class AddSubtaskCommand(BaseCommand):
             data["focused_ticket"] = target_project
             data["focused_subtask"] = sub_task_url
             
-            # Start new timer for the focused subtask
-            start_focus_timer(data)
+            # Start new timer for the focused subtask if work session is active
+            work_session = data.get("work_session", {})
+            if work_session.get("active"):
+                start_focus_timer(data)
             
             # Don't reset checkin timer when switching focus within active work - 
             # let the scheduler handle check-ins based on actual elapsed time
@@ -318,9 +320,13 @@ class FocusSubtaskCommand(BaseCommand):
             data["focused_subtask"] = subtask_name
             
             # Start new timer for the focused subtask
-            start_focus_timer(data)
-            
-            message = t('cmd_info_subtask_focus_set', name=subtask_name)
+            work_session = data.get("work_session", {})
+            if work_session.get("active"):
+                start_focus_timer(data)
+                message = t('cmd_info_subtask_focus_set', name=subtask_name)
+            else:
+                # Work session not active - focus but don't start timer
+                message = t('cmd_info_subtask_focus_set_no_timer', name=subtask_name)
         
         # Don't reset checkin timer on focus toggle - maintain continuous work tracking
         # Only the scheduler should manage check-in timing based on actual work periods
@@ -439,8 +445,10 @@ class FocusCommand(BaseCommand):
                 data["sub_tasks"][target_ticket][target_subtask]["status"] = "focused"
                 data["focused_subtask"] = target_subtask
                 
-                # Start new timer for the focused subtask
-                start_focus_timer(data)
+                # Start new timer for the focused subtask if work session is active
+                work_session = data.get("work_session", {})
+                if work_session.get("active"):
+                    start_focus_timer(data)
             
             # Don't reset checkin timer when changing focus during active work
             # This allows proper time tracking across focus changes

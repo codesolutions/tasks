@@ -370,6 +370,17 @@ def main(stdscr):
                         sub_name, _ = current_ticket_subtask_list_visible[selected_subtask_index]
                         entity_for_dedicated_notes = {"type": "subtask", "name": sub_name, "main_task_name": active_main_ticket}
                         current_view = VIEW_DEDICATED_NOTES
+                        
+                        # Mark Jira comments as read when switching to subtask notes view
+                        jira_ticket_id = inc.helpers.get_jira_ticket_from_url(sub_name)
+                        if jira_ticket_id:
+                            with jira_cache_lock:
+                                if jira_ticket_id in jira_cache and (jira_cache[jira_ticket_id].get('new_jira_comment') or jira_cache[jira_ticket_id].get('new_trello_comment')):
+                                    jira_cache[jira_ticket_id]['new_jira_comment'] = False
+                                    jira_cache[jira_ticket_id]['new_trello_comment'] = False
+                                    from inc.jira import save_jira_cache
+                                    save_jira_cache(jira_cache, jira_cache_lock)
+                        
                     elif active_main_ticket:
                         entity_for_dedicated_notes = {"type": "task", "name": active_main_ticket}
                         current_view = VIEW_DEDICATED_NOTES
@@ -423,7 +434,8 @@ def main(stdscr):
                                 if jira_ticket_id in jira_cache and (jira_cache[jira_ticket_id].get('new_jira_comment') or jira_cache[jira_ticket_id].get('new_trello_comment')):
                                     jira_cache[jira_ticket_id]['new_jira_comment'] = False
                                     jira_cache[jira_ticket_id]['new_trello_comment'] = False
-                                    data_manager.save_data(app_data)
+                                    from inc.jira import save_jira_cache
+                                    save_jira_cache(jira_cache, jira_cache_lock)
                 
                 elif key == curses.KEY_DOWN:
                     if current_ticket_subtask_list_visible:
@@ -441,7 +453,8 @@ def main(stdscr):
                                 if jira_ticket_id in jira_cache and (jira_cache[jira_ticket_id].get('new_jira_comment') or jira_cache[jira_ticket_id].get('new_trello_comment')):
                                     jira_cache[jira_ticket_id]['new_jira_comment'] = False
                                     jira_cache[jira_ticket_id]['new_trello_comment'] = False
-                                    data_manager.save_data(app_data)
+                                    from inc.jira import save_jira_cache
+                                    save_jira_cache(jira_cache, jira_cache_lock)
                 
                 elif key == '\n' or key == curses.KEY_ENTER:
                     cmd_parts = command_buffer.split()
@@ -671,10 +684,17 @@ def main(stdscr):
                         # Log the time from the hourly check-in
                         pending = app_data.get("pending_checkin", {})
                         if pending:
-                            duration_seconds = pending.get("duration_seconds", 3600)
+                            # Calculate actual time worked since timer started
+                            timer_start_ts = pending.get("timer_start_ts")
+                            if timer_start_ts:
+                                actual_work_seconds = int(datetime.now().timestamp() - timer_start_ts)
+                            else:
+                                # Fallback - shouldn't happen with new system
+                                actual_work_seconds = pending.get("duration_seconds", 3600)
+                            
                             suggested_subtask = pending.get("suggested_subtask")
                             if suggested_subtask:
-                                add_time_entry(app_data, entry_type="task", subtask=suggested_subtask, seconds=duration_seconds)
+                                add_time_entry(app_data, entry_type="task", subtask=suggested_subtask, seconds=actual_work_seconds)
                                 data_manager.save_data(app_data)
                                 
                                 # Restart timer for the suggested subtask
@@ -731,8 +751,15 @@ def main(stdscr):
                         # Now log the break time from the hourly check-in
                         pending = app_data.get("pending_checkin", {})
                         if pending:
-                            duration_seconds = pending.get("duration_seconds", 3600)
-                            add_time_entry(app_data, entry_type="break", subtask=None, seconds=duration_seconds)
+                            # Calculate actual time since timer started
+                            timer_start_ts = pending.get("timer_start_ts")
+                            if timer_start_ts:
+                                actual_work_seconds = int(datetime.now().timestamp() - timer_start_ts)
+                            else:
+                                # Fallback - shouldn't happen with new system
+                                actual_work_seconds = pending.get("duration_seconds", 3600)
+                            
+                            add_time_entry(app_data, entry_type="break", subtask=None, seconds=actual_work_seconds)
                             data_manager.save_data(app_data)
                         
                         app_data["pending_checkin"] = None
@@ -809,9 +836,16 @@ def main(stdscr):
                                 selected_ticket, selected_subtask = available_tasks[selected_checkin_task_index]
                                 pending = app_data.get("pending_checkin", {})
                                 if pending:
-                                    duration_seconds = pending.get("duration_seconds", 3600)
+                                    # Calculate actual time worked since timer started
+                                    timer_start_ts = pending.get("timer_start_ts")
+                                    if timer_start_ts:
+                                        actual_work_seconds = int(datetime.now().timestamp() - timer_start_ts)
+                                    else:
+                                        # Fallback - shouldn't happen with new system
+                                        actual_work_seconds = pending.get("duration_seconds", 3600)
+                                    
                                     # Use the actual subtask identifier, which will be normalized by add_time_entry
-                                    add_time_entry(app_data, entry_type="task", subtask=selected_subtask, seconds=duration_seconds)
+                                    add_time_entry(app_data, entry_type="task", subtask=selected_subtask, seconds=actual_work_seconds)
                                     data_manager.save_data(app_data)
                                     
                                     # Update focus to the selected subtask and start timer
@@ -831,6 +865,10 @@ def main(stdscr):
                     selected_checkin_task_index = -1
                     command_buffer = ""
                     request_full_redraw = True
+        
+        # Fetch current meetings from calendar poller
+        with external_meetings_lock:
+            external_meetings[:] = calendar_poller.get_meetings()
         
         # Render UI with error handling to prevent crashes
         if user_activity_caused_draw_this_cycle or request_full_redraw or \
