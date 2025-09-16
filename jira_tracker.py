@@ -252,6 +252,10 @@ def main(stdscr):
     request_full_redraw = True
     previous_window_size = (0, 0)
     
+    # External service polling timer
+    ext_services_poll_interval = inc.config_manager.config.get("POLL_EXT_SERVICES_INTERVAL_MINUTES", 2) * 60  # Convert to seconds
+    last_ext_services_poll_time = 0.0
+    
     while True:
         current_time = time.time()
         
@@ -347,6 +351,14 @@ def main(stdscr):
             # Initial state update
             update_current_state()
         
+        # Check if it's time to poll external services (Jira/Trello)
+        should_poll_ext_services = (current_time - last_ext_services_poll_time >= ext_services_poll_interval)
+        if should_poll_ext_services:
+            with data_lock:
+                from inc.jira import poll_all_visible_subtasks
+                poll_all_visible_subtasks(app_data, jira_cache, jira_cache_lock)
+            last_ext_services_poll_time = current_time
+        
         # Handle input
         key = -1
         try:
@@ -380,14 +392,23 @@ def main(stdscr):
                         # Mark Jira comments as read when switching to subtask notes view
                         jira_ticket_id = inc.helpers.get_jira_ticket_from_url(sub_name)
                         if jira_ticket_id:
+                            needs_save = False
                             with jira_cache_lock:
                                 if jira_ticket_id in jira_cache and (jira_cache[jira_ticket_id].get('new_jira_comment') or jira_cache[jira_ticket_id].get('new_trello_comment')):
                                     jira_cache[jira_ticket_id]['new_jira_comment'] = False
                                     jira_cache[jira_ticket_id]['new_trello_comment'] = False
-                            # Save outside the lock to prevent nested locking
-                            if jira_ticket_id and jira_ticket_id in jira_cache:
+                                    needs_save = True
+                            # Save outside the lock to prevent nested locking and remove notifications
+                            if needs_save:
                                 from inc.jira import save_jira_cache
                                 save_jira_cache(jira_cache, jira_cache_lock)
+                                # Remove related permanent notifications
+                                jira_notif = f"New Jira comment in {jira_ticket_id}"
+                                trello_notif = f"New Trello comment in {jira_ticket_id}"
+                                if jira_notif in permanent_notifications:
+                                    permanent_notifications.remove(jira_notif)
+                                if trello_notif in permanent_notifications:
+                                    permanent_notifications.remove(trello_notif)
                         
                     elif active_main_ticket:
                         entity_for_dedicated_notes = {"type": "task", "name": active_main_ticket}
@@ -444,10 +465,17 @@ def main(stdscr):
                                     jira_cache[jira_ticket_id]['new_jira_comment'] = False
                                     jira_cache[jira_ticket_id]['new_trello_comment'] = False
                                     needs_save = True
-                            # Save outside the lock to prevent nested locking
+                            # Save outside the lock to prevent nested locking and remove notifications
                             if needs_save:
                                 from inc.jira import save_jira_cache
                                 save_jira_cache(jira_cache, jira_cache_lock)
+                                # Remove related permanent notifications
+                                jira_notif = f"New Jira comment in {jira_ticket_id}"
+                                trello_notif = f"New Trello comment in {jira_ticket_id}"
+                                if jira_notif in permanent_notifications:
+                                    permanent_notifications.remove(jira_notif)
+                                if trello_notif in permanent_notifications:
+                                    permanent_notifications.remove(trello_notif)
                 
                 elif key == curses.KEY_DOWN:
                     if current_ticket_subtask_list_visible:
@@ -467,10 +495,17 @@ def main(stdscr):
                                     jira_cache[jira_ticket_id]['new_jira_comment'] = False
                                     jira_cache[jira_ticket_id]['new_trello_comment'] = False
                                     needs_save = True
-                            # Save outside the lock to prevent nested locking
+                            # Save outside the lock to prevent nested locking and remove notifications
                             if needs_save:
                                 from inc.jira import save_jira_cache
                                 save_jira_cache(jira_cache, jira_cache_lock)
+                                # Remove related permanent notifications
+                                jira_notif = f"New Jira comment in {jira_ticket_id}"
+                                trello_notif = f"New Trello comment in {jira_ticket_id}"
+                                if jira_notif in permanent_notifications:
+                                    permanent_notifications.remove(jira_notif)
+                                if trello_notif in permanent_notifications:
+                                    permanent_notifications.remove(trello_notif)
                 
                 elif key == '\n' or key == curses.KEY_ENTER:
                     cmd_parts = command_buffer.split()

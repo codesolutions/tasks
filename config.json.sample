@@ -39,5 +39,6 @@
         "ENABLED": true,
         "HOURLY_CHECKIN_ENABLED": true,
         "CHECKIN_INTERVAL_MINUTES": 60
-    }
+    },
+    "POLL_EXT_SERVICES_INTERVAL_MINUTES": 2
 }
