@@ -26,7 +26,8 @@ from inc.utils.constants import (
     COLOR_PAIR_SELECTED, COLOR_PAIR_TASK_ALL_SUBTASKS_DONE, COLOR_PAIR_TASK_ALL_SUBTASKS_HIDDEN,
     COLOR_PAIR_URGENT_BOX, COLOR_PAIR_PR_UNHANDLED, COLOR_PAIR_PR_APPROVED, COLOR_PAIR_FOCUSED,
     COLOR_PAIR_PERMANENT_NOTIFICATION, COLOR_PAIR_STANDOUT, COLOR_PAIR_NEW_COMMENT,
-    VIEW_MAIN, VIEW_DEDICATED_NOTES, VIEW_DAILY_NOTES, VIEW_TIME_LOG, VIEW_HOURLY_CHECKIN
+    VIEW_MAIN, VIEW_DEDICATED_NOTES, VIEW_DAILY_NOTES, VIEW_TIME_LOG, VIEW_HOURLY_CHECKIN,
+    DEFAULT_CONTENT_REFRESH_INTERVAL, DEFAULT_CLOCK_REFRESH_INTERVAL
 )
 
 # Core functionality
@@ -244,9 +245,9 @@ def main(stdscr):
     web_monitor.start()
     
     # Main application loop - much cleaner now!
-    clock_refresh_interval = 1.0
+    clock_refresh_interval = DEFAULT_CLOCK_REFRESH_INTERVAL
     last_clock_refresh_time = 0.0
-    content_refresh_interval = 120.0
+    content_refresh_interval = DEFAULT_CONTENT_REFRESH_INTERVAL
     last_content_refresh_time = 0.0
     request_full_redraw = True
     previous_window_size = (0, 0)
@@ -876,8 +877,9 @@ def main(stdscr):
             external_meetings[:] = calendar_poller.get_meetings()
         
         # Render UI with error handling to prevent crashes
+        should_refresh_content = (current_time - last_content_refresh_time >= content_refresh_interval)
         if user_activity_caused_draw_this_cycle or request_full_redraw or \
-           (current_time - last_clock_refresh_time >= clock_refresh_interval):
+           (current_time - last_clock_refresh_time >= clock_refresh_interval) or should_refresh_content:
             
             try:
                 display_ui(stdscr, app_data, command_buffer, request_full_redraw, selected_subtask_index, 
@@ -894,7 +896,7 @@ def main(stdscr):
                     pass
             
             last_clock_refresh_time = current_time
-            if request_full_redraw:
+            if request_full_redraw or should_refresh_content:
                 last_content_refresh_time = current_time
                 request_full_redraw = False
         
