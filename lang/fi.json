@@ -20,7 +20,6 @@
     "ui_info_box_header": "--- Info ---",
     "ui_focused_task_prefix": "Fokus: {name}",
     "ui_current_task_prefix": "Työn alla: ",
-    "ui_paused_tasks": "({count} pausella)",
     "ui_subtasks_header": "Alavaiheet (Enter=valmis, d/f=piilota/fokus, nuolet, Sh+TAB=muistinp.)",
     "ui_no_subtasks": "Ei alavaiheita.",
     "ui_main_task_notes_header": "Päätehtävän '{task}' muistiinpanot (Shift+TAB tarkemmin):",

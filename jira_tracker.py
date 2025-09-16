@@ -397,18 +397,19 @@ def main(stdscr):
                                 if jira_ticket_id in jira_cache and (jira_cache[jira_ticket_id].get('new_jira_comment') or jira_cache[jira_ticket_id].get('new_trello_comment')):
                                     jira_cache[jira_ticket_id]['new_jira_comment'] = False
                                     jira_cache[jira_ticket_id]['new_trello_comment'] = False
+
+                                    # Remove related permanent notifications
+                                    jira_notif = f"New Jira comment in {jira_ticket_id}"
+                                    trello_notif = f"New Trello comment in {jira_ticket_id}"
+                                    if jira_notif in permanent_notifications:
+                                        permanent_notifications.remove(jira_notif)
+                                    if trello_notif in permanent_notifications:
+                                        permanent_notifications.remove(trello_notif)
                                     needs_save = True
                             # Save outside the lock to prevent nested locking and remove notifications
                             if needs_save:
                                 from inc.jira import save_jira_cache
                                 save_jira_cache(jira_cache, jira_cache_lock)
-                                # Remove related permanent notifications
-                                jira_notif = f"New Jira comment in {jira_ticket_id}"
-                                trello_notif = f"New Trello comment in {jira_ticket_id}"
-                                if jira_notif in permanent_notifications:
-                                    permanent_notifications.remove(jira_notif)
-                                if trello_notif in permanent_notifications:
-                                    permanent_notifications.remove(trello_notif)
                         
                     elif active_main_ticket:
                         entity_for_dedicated_notes = {"type": "task", "name": active_main_ticket}
@@ -464,19 +465,20 @@ def main(stdscr):
                                 if jira_ticket_id in jira_cache and (jira_cache[jira_ticket_id].get('new_jira_comment') or jira_cache[jira_ticket_id].get('new_trello_comment')):
                                     jira_cache[jira_ticket_id]['new_jira_comment'] = False
                                     jira_cache[jira_ticket_id]['new_trello_comment'] = False
+
+                                    # Remove related permanent notifications
+                                    jira_notif = f"New Jira comment in {jira_ticket_id}"
+                                    trello_notif = f"New Trello comment in {jira_ticket_id}"
+                                    if jira_notif in permanent_notifications:
+                                        permanent_notifications.remove(jira_notif)
+                                    if trello_notif in permanent_notifications:
+                                        permanent_notifications.remove(trello_notif)
                                     needs_save = True
                             # Save outside the lock to prevent nested locking and remove notifications
                             if needs_save:
                                 from inc.jira import save_jira_cache
                                 save_jira_cache(jira_cache, jira_cache_lock)
-                                # Remove related permanent notifications
-                                jira_notif = f"New Jira comment in {jira_ticket_id}"
-                                trello_notif = f"New Trello comment in {jira_ticket_id}"
-                                if jira_notif in permanent_notifications:
-                                    permanent_notifications.remove(jira_notif)
-                                if trello_notif in permanent_notifications:
-                                    permanent_notifications.remove(trello_notif)
-                
+                                
                 elif key == curses.KEY_DOWN:
                     if current_ticket_subtask_list_visible:
                         last_idx = len(current_ticket_subtask_list_visible) - 1
@@ -494,18 +496,19 @@ def main(stdscr):
                                 if jira_ticket_id in jira_cache and (jira_cache[jira_ticket_id].get('new_jira_comment') or jira_cache[jira_ticket_id].get('new_trello_comment')):
                                     jira_cache[jira_ticket_id]['new_jira_comment'] = False
                                     jira_cache[jira_ticket_id]['new_trello_comment'] = False
+
+                                    # Remove related permanent notifications
+                                    jira_notif = f"New Jira comment in {jira_ticket_id}"
+                                    trello_notif = f"New Trello comment in {jira_ticket_id}"
+                                    if jira_notif in permanent_notifications:
+                                        permanent_notifications.remove(jira_notif)
+                                    if trello_notif in permanent_notifications:
+                                        permanent_notifications.remove(trello_notif)
                                     needs_save = True
                             # Save outside the lock to prevent nested locking and remove notifications
                             if needs_save:
                                 from inc.jira import save_jira_cache
                                 save_jira_cache(jira_cache, jira_cache_lock)
-                                # Remove related permanent notifications
-                                jira_notif = f"New Jira comment in {jira_ticket_id}"
-                                trello_notif = f"New Trello comment in {jira_ticket_id}"
-                                if jira_notif in permanent_notifications:
-                                    permanent_notifications.remove(jira_notif)
-                                if trello_notif in permanent_notifications:
-                                    permanent_notifications.remove(trello_notif)
                 
                 elif key == '\n' or key == curses.KEY_ENTER:
                     cmd_parts = command_buffer.split()
@@ -721,7 +724,11 @@ def main(stdscr):
             
             # Handle hourly checkin view inputs - restore missing functionality
             elif current_view == VIEW_HOURLY_CHECKIN:
-                if key in ['Y', 'y']:
+                # Prevent duplicate processing by checking if pending_checkin still exists
+                with data_lock:
+                    has_pending_checkin = bool(app_data.get("pending_checkin"))
+                
+                if key in ['Y', 'y'] and has_pending_checkin:
                     # User worked on suggested task
                     with data_lock:
                         from inc.time_tracker import add_time_entry, start_focus_timer
@@ -759,7 +766,7 @@ def main(stdscr):
                     command_buffer = ""
                     request_full_redraw = True
                 
-                elif key in ['S', 's']:
+                elif key in ['S', 's'] and has_pending_checkin:
                     # User wants to select a different task - start selection mode
                     with data_lock:
                         from inc.time_tracker import stop_focus_timer_and_log
@@ -791,15 +798,16 @@ def main(stdscr):
                         selected_checkin_task_index = -1  # No tasks available
                     request_full_redraw = True
                 
-                elif key in ['B', 'b']:
+                elif key in ['B', 'b'] and has_pending_checkin:
                     # User was on break/meeting
                     with data_lock:
-                        from inc.time_tracker import add_time_entry, stop_focus_timer_and_log
+                        from inc.time_tracker import add_time_entry
                         
-                        # Stop current timer and log time before logging break time
-                        stop_focus_timer_and_log(app_data)
+                        # Clear current timer WITHOUT logging task time since this was break time
+                        work_session = app_data.get("work_session", {})
+                        work_session.pop("current_timer_start_ts", None)
                         
-                        # Now log the break time from the hourly check-in
+                        # Log the break time from the hourly check-in
                         pending = app_data.get("pending_checkin", {})
                         if pending:
                             # Calculate actual time since timer started
@@ -821,7 +829,7 @@ def main(stdscr):
                     command_buffer = ""
                     request_full_redraw = True
                 
-                elif key in ['I', 'i']:
+                elif key in ['I', 'i'] and has_pending_checkin:
                     # Ignore this check-in
                     with data_lock:
                         app_data["pending_checkin"] = None
@@ -861,7 +869,11 @@ def main(stdscr):
                     request_full_redraw = True
                 
                 elif key in ['\n', curses.KEY_ENTER]:
-                    if selected_checkin_task_index >= 0:
+                    # Re-check pending_checkin since it might have been processed by another key
+                    with data_lock:
+                        current_has_pending = bool(app_data.get("pending_checkin"))
+                    
+                    if selected_checkin_task_index >= 0 and current_has_pending:
                         # User confirmed selection of a task
                         available_tasks = []
                         with data_lock:
@@ -906,7 +918,7 @@ def main(stdscr):
                                 
                                 app_data["pending_checkin"] = None
                                 data_manager.save_data(app_data)
-                    else:
+                    elif current_has_pending:
                         # User pressed Enter without selecting a task - cancel the check-in
                         with data_lock:
                             app_data["pending_checkin"] = None
@@ -919,9 +931,11 @@ def main(stdscr):
         
         # Render UI with error handling to prevent crashes
         should_refresh_content = (current_time - last_content_refresh_time >= content_refresh_interval)
-        
+
         # Fetch current meetings from calendar poller (only on content refresh)
         if should_refresh_content or request_full_redraw:
+            # Didn't update without this, added as quick fix
+            request_full_redraw = True
             with external_meetings_lock:
                 external_meetings[:] = calendar_poller.get_meetings()
         
@@ -947,7 +961,7 @@ def main(stdscr):
                 last_content_refresh_time = current_time
                 request_full_redraw = False
         
-        time.sleep(0.05)
+        time.sleep(0.01)
     
     return "EXIT"
 

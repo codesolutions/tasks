@@ -333,9 +333,6 @@ def display_main_view(stdscr, data, command_buffer="", full_redraw=False, select
     current_ticket = data.get("current_ticket")
 
     if current_ticket:
-        paused_count = len(data.get('paused_tasks', []))
-        paused_info = f" {t('ui_paused_tasks', count=paused_count)}" if paused_count > 0 else ""
-        
         # Add work session status and daily total
         work_session = data.get("work_session", {})
         today_str = date.today().isoformat()
@@ -352,7 +349,7 @@ def display_main_view(stdscr, data, command_buffer="", full_redraw=False, select
             if current_timer_start:
                 elapsed = datetime.now().timestamp() - current_timer_start
                 elapsed_str = format_timedelta_minutes(timedelta(seconds=int(elapsed)))
-                work_status = f" [⏱️ {elapsed_str}]"
+                work_status = f" [⏱️  {elapsed_str}]"
             else:
                 work_status = " [⏱️ active]"
         
@@ -360,10 +357,10 @@ def display_main_view(stdscr, data, command_buffer="", full_redraw=False, select
         time_info = f" (today: {today_total_str}{work_status})"
         
         if content_height_obj[0] > 0 and effective_main_width > 0:
-            available_width_for_ticket_name = effective_main_width - len(base_text) - len(paused_info) - len(time_info) - 1
+            available_width_for_ticket_name = effective_main_width - len(base_text) - len(time_info) - 1
             if available_width_for_ticket_name < 0: available_width_for_ticket_name = 0
             ticket_display_name = current_ticket[:available_width_for_ticket_name]
-            full_ticket_line = f"{base_text}{ticket_display_name}{paused_info}{time_info}"
+            full_ticket_line = f"{base_text}{ticket_display_name}{time_info}"
             stdscr.addstr(row, 0, full_ticket_line[:effective_main_width])
             row += 1; content_height_obj[0] -= 1
 
