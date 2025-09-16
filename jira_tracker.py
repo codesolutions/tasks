@@ -384,8 +384,10 @@ def main(stdscr):
                                 if jira_ticket_id in jira_cache and (jira_cache[jira_ticket_id].get('new_jira_comment') or jira_cache[jira_ticket_id].get('new_trello_comment')):
                                     jira_cache[jira_ticket_id]['new_jira_comment'] = False
                                     jira_cache[jira_ticket_id]['new_trello_comment'] = False
-                                    from inc.jira import save_jira_cache
-                                    save_jira_cache(jira_cache, jira_cache_lock)
+                            # Save outside the lock to prevent nested locking
+                            if jira_ticket_id and jira_ticket_id in jira_cache:
+                                from inc.jira import save_jira_cache
+                                save_jira_cache(jira_cache, jira_cache_lock)
                         
                     elif active_main_ticket:
                         entity_for_dedicated_notes = {"type": "task", "name": active_main_ticket}
@@ -436,12 +438,16 @@ def main(stdscr):
                         if selected_subtask_index != -1:
                             sub_task_name, _ = current_ticket_subtask_list_visible[selected_subtask_index]
                             jira_ticket_id = inc.helpers.get_jira_ticket_from_url(sub_task_name)
+                            needs_save = False
                             with jira_cache_lock:
                                 if jira_ticket_id in jira_cache and (jira_cache[jira_ticket_id].get('new_jira_comment') or jira_cache[jira_ticket_id].get('new_trello_comment')):
                                     jira_cache[jira_ticket_id]['new_jira_comment'] = False
                                     jira_cache[jira_ticket_id]['new_trello_comment'] = False
-                                    from inc.jira import save_jira_cache
-                                    save_jira_cache(jira_cache, jira_cache_lock)
+                                    needs_save = True
+                            # Save outside the lock to prevent nested locking
+                            if needs_save:
+                                from inc.jira import save_jira_cache
+                                save_jira_cache(jira_cache, jira_cache_lock)
                 
                 elif key == curses.KEY_DOWN:
                     if current_ticket_subtask_list_visible:
@@ -455,12 +461,16 @@ def main(stdscr):
                         if selected_subtask_index != -1:
                             sub_task_name, _ = current_ticket_subtask_list_visible[selected_subtask_index]
                             jira_ticket_id = inc.helpers.get_jira_ticket_from_url(sub_task_name)
+                            needs_save = False
                             with jira_cache_lock:
                                 if jira_ticket_id in jira_cache and (jira_cache[jira_ticket_id].get('new_jira_comment') or jira_cache[jira_ticket_id].get('new_trello_comment')):
                                     jira_cache[jira_ticket_id]['new_jira_comment'] = False
                                     jira_cache[jira_ticket_id]['new_trello_comment'] = False
-                                    from inc.jira import save_jira_cache
-                                    save_jira_cache(jira_cache, jira_cache_lock)
+                                    needs_save = True
+                            # Save outside the lock to prevent nested locking
+                            if needs_save:
+                                from inc.jira import save_jira_cache
+                                save_jira_cache(jira_cache, jira_cache_lock)
                 
                 elif key == '\n' or key == curses.KEY_ENTER:
                     cmd_parts = command_buffer.split()
@@ -872,12 +882,14 @@ def main(stdscr):
                     command_buffer = ""
                     request_full_redraw = True
         
-        # Fetch current meetings from calendar poller
-        with external_meetings_lock:
-            external_meetings[:] = calendar_poller.get_meetings()
-        
         # Render UI with error handling to prevent crashes
         should_refresh_content = (current_time - last_content_refresh_time >= content_refresh_interval)
+        
+        # Fetch current meetings from calendar poller (only on content refresh)
+        if should_refresh_content or request_full_redraw:
+            with external_meetings_lock:
+                external_meetings[:] = calendar_poller.get_meetings()
+        
         if user_activity_caused_draw_this_cycle or request_full_redraw or \
            (current_time - last_clock_refresh_time >= clock_refresh_interval) or should_refresh_content:
             

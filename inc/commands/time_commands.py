@@ -30,6 +30,9 @@ class StartDayCommand(BaseCommand):
         work_session["current_timer_start_ts"] = datetime.now().timestamp()
         work_session["last_activity_ts"] = datetime.now().timestamp()
         
+        # Reset check-in timer to prevent immediate check-in prompt
+        data["last_checkin_ts"] = datetime.now().timestamp()
+        
         return CommandResult(
             success=True,
             data_modified=True,
