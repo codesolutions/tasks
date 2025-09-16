@@ -303,9 +303,9 @@ def main(stdscr):
                 if t not in completed_tickets
             ])
         
-        with data_lock:
-            # Handle auto-end daily summary (takes priority over everything else)
-            if app_data.get("show_auto_end_summary"):
+        # Handle auto-end daily summary (takes priority over everything else)
+        if app_data.get("show_auto_end_summary"):
+            with data_lock:
                 from inc.views.daily_summary_view import show_daily_summary
                 show_daily_summary(stdscr, app_data, auto_end=True)
                 app_data.pop("show_auto_end_summary", None)  # Clear the flag
@@ -318,9 +318,14 @@ def main(stdscr):
                     command_buffer = ""
                 
                 request_full_redraw = True
-            
+                # Clear any buffered input before continuing
+                curses.flushinp()
+            # Continue to next iteration to redraw main view
+            continue
+        
+        with data_lock:
             # Handle hourly check-in (only if not in other views and no auto-end summary)
-            elif app_data.get("pending_checkin") and current_view == VIEW_MAIN:
+            if app_data.get("pending_checkin") and current_view == VIEW_MAIN:
                 current_view = VIEW_HOURLY_CHECKIN
                 selected_checkin_task_index = -1
                 command_buffer = ""
