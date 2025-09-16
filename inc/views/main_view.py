@@ -117,13 +117,10 @@ def display_main_view(stdscr, data, command_buffer="", full_redraw=False, select
     command_line_text = "> " + display_buffer
     cursor_x = len(command_line_text)
 
+    from inc.commands.command_registry import get_command_help
+    
     help_lines_definitions = {
-        "full": [
-            t('help_header'), t('help_switch_task'), t('help_new_task'), t('help_add_subtask'),
-            t('help_hide_subtask'), t('help_add_pr'), t('help_done_subtask'), t('help_done_task'),
-            t('help_add_meeting'), t('help_add_event'), t('help_add_note'), t('help_set_focus'), t('help_set_subtask_focus'), t('help_toggle_help'),
-            t('help_daily_notes'), t('help_notes_view'), t('help_quit')
-        ],
+        "full": get_command_help().split('\n'),
         "hidden": [t('help_hidden_prompt')]
     }
     current_help_lines_list = help_lines_definitions["full"] if show_help_footer else help_lines_definitions["hidden"]

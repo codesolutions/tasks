@@ -20,7 +20,7 @@ from inc.commands.time_commands import (
 )
 from inc.commands.utility_commands import (
     HelpCommand, QuitCommand, LoginCommand, AddNoteCommand,
-    AddMeetingCommand, DeleteNoteCommand
+    AddMeetingCommand, DeleteNoteCommand, CompletedTasksCommand
 )
 
 
@@ -57,6 +57,7 @@ def initialize_commands():
     command_registry.register("note", AddNoteCommand())
     command_registry.register("p", AddMeetingCommand('meeting'))
     command_registry.register("k", AddMeetingCommand('interruption'))
+    command_registry.register("completed", CompletedTasksCommand())
     
     # Special commands for different view contexts
     # These will be handled with additional logic in the main loop
@@ -82,7 +83,7 @@ def get_command_help() -> str:
     
     # Group commands by category
     categories = {
-        "Task Management": ["n", "x", "t", "ok"],
+        "Task Management": ["n", "x", "t", "ok", "completed"],
         "Subtask Management": ["a", "d", "f", "focus", "pr"], 
         "Time Tracking": ["startday", "endday", "pause", "resume", "logtime", "c", "timelog"],
         "Notes & Events": ["note", "p", "k"],

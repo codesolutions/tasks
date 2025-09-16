@@ -245,6 +245,30 @@ class ViewSwitchCommand(BaseCommand):
         return f"{main_cmd} - Switch to {self.target_view.replace('_', ' ')} view"
 
 
+class CompletedTasksCommand(BaseCommand):
+    """Command to show completed tasks."""
+    
+    def execute(self, data, args: List[str], context: CommandContext) -> CommandResult:
+        completed = data.get("completed_tickets", [])
+        if not completed:
+            return CommandResult(
+                success=True,
+                message="No completed tasks found."
+            )
+        
+        # Create a nice formatted list
+        completed_list = "\n".join([f"✅ {task}" for task in completed])
+        message = f"Completed Tasks ({len(completed)}):" + "\n" + completed_list
+        
+        return CommandResult(
+            success=True,
+            message=message
+        )
+    
+    def get_usage(self) -> str:
+        return "completed - Show list of completed tasks"
+
+
 # Convenience function to create view switch commands
 def create_view_switch_commands():
     """Create all view switch command instances."""
