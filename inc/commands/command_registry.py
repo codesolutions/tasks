@@ -76,7 +76,7 @@ def get_command_help() -> str:
     Returns:
         Formatted help text listing all commands
     """
-    help_lines = ["Available Commands:", ""]
+    help_lines = ["", "Available Commands:", ""]
     
     # Get all commands and their usage
     all_commands = command_registry.get_all_commands()

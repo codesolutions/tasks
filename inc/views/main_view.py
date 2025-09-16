@@ -28,7 +28,7 @@ from inc.views.base_view import show_permanent_notification
 (COLOR_PAIR_DEFAULT, COLOR_PAIR_REVERSE, COLOR_PAIR_GREY, COLOR_PAIR_PAUSED,
  COLOR_PAIR_SELECTED, COLOR_PAIR_TASK_ALL_SUBTASKS_DONE, COLOR_PAIR_TASK_ALL_SUBTASKS_HIDDEN, COLOR_PAIR_URGENT_BOX,
  COLOR_PAIR_PR_UNHANDLED, COLOR_PAIR_PR_APPROVED, COLOR_PAIR_FOCUSED,
- COLOR_PAIR_PERMANENT_NOTIFICATION, COLOR_PAIR_STANDOUT, COLOR_PAIR_NEW_COMMENT) = range(1, 15)
+ COLOR_PAIR_PERMANENT_NOTIFICATION, COLOR_PAIR_STANDOUT, COLOR_PAIR_NEW_COMMENT, COLOR_PAIR_HELP_OVERLAY) = range(1, 16)
 
 VIEW_MAIN = "main"
 VIEW_DEDICATED_NOTES = "dedicated_notes"
@@ -832,20 +832,34 @@ def display_main_view(stdscr, data, command_buffer="", full_redraw=False, select
         if interruptions_shown_count == 0 and content_height_obj[0] > 0:
              stdscr.addstr(row, 2, t('ui_no_other_events')[:effective_main_width-2]); row += 1
 
-    help_section_start_y = height - 1 - 1 - num_actual_help_lines
-    max_desc_width_footer = effective_main_width
-    if help_section_start_y >= row and effective_main_width > 0 :
-        stdscr.attron(curses.color_pair(COLOR_PAIR_DEFAULT))
-        for i, line_text in enumerate(current_help_lines_list):
-            current_draw_y = help_section_start_y + i
-            if current_draw_y < height - 2:
-                indent = 2 if show_help_footer and i > 0 and not line_text.strip() == t('help_header') else 0
-                if line_text.strip() == t('help_header'): indent = 0
-                try:
-                    stdscr.addstr(current_draw_y, indent, line_text[:max(0, max_desc_width_footer - indent)])
-                except curses.error: pass
-            else: break
-        stdscr.attroff(curses.color_pair(COLOR_PAIR_DEFAULT))
+    # Draw help overlay - always show when requested, overlaying the content
+    if show_help_footer and effective_main_width > 0:
+        # Calculate help overlay dimensions
+        help_start_y = max(1, height - num_actual_help_lines - 3)  # Leave space for command line
+        help_width = min(effective_main_width, width - 4)  # Leave some margins
+        help_height = min(num_actual_help_lines, height - help_start_y - 2)
+        
+        # Draw help overlay with black background
+        try:
+            for i in range(help_height):
+                overlay_y = help_start_y + i
+                if overlay_y < height - 2 and i < len(current_help_lines_list):
+                    line_text = current_help_lines_list[i]
+                    # Clear the line with black background
+                    padding = " " * help_width
+                    stdscr.addstr(overlay_y, 2, padding, curses.color_pair(COLOR_PAIR_HELP_OVERLAY))
+                    
+                    # Add the help text with appropriate indentation
+                    indent = 2 if i > 0 and line_text.strip() != t('help_header') else 0
+                    if line_text.strip() == t('help_header'): 
+                        indent = 0
+                    
+                    display_text = line_text[:max(0, help_width - indent - 2)]
+                    if display_text.strip():  # Only draw non-empty lines
+                        stdscr.addstr(overlay_y, 2 + indent, display_text, 
+                                    curses.color_pair(COLOR_PAIR_HELP_OVERLAY) | curses.A_BOLD)
+        except curses.error:
+            pass  # Ignore drawing errors
 
     try:
         stdscr.addstr(height - 1, 0, " " * (width-1 if width > 0 else 0) )
@@ -856,7 +870,7 @@ def display_main_view(stdscr, data, command_buffer="", full_redraw=False, select
 
     try:
         stdscr.attroff(curses.A_BOLD)
-        for i in range(1, 11):
+        for i in range(1, 17):  # Updated to include new COLOR_PAIR_HELP_OVERLAY
             stdscr.attroff(curses.color_pair(i))
     except curses.error: pass
     stdscr.refresh()
