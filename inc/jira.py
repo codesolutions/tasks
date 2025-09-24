@@ -38,6 +38,7 @@ try:
     from selenium import webdriver
     from selenium.webdriver.chrome.service import Service
     from selenium.webdriver.chrome.options import Options
+    from webdriver_manager.chrome import ChromeDriverManager
     SELENIUM_AVAILABLE = True
 except ImportError:
     SELENIUM_AVAILABLE = False
@@ -47,12 +48,13 @@ except ImportError:
 def get_and_save_web_session(service_name, login_url, session_file, driver_path, permanent_notifications_ref):
     """
     Handles interactive browser login to capture session cookies for a given service.
+    Uses webdriver-manager to automatically handle ChromeDriver versions.
     
     Args:
         service_name (str): The name of the service (e.g., "Jira", "Trello").
         login_url (str): The URL to open for the user to log in.
         session_file (str): The path to save the session cookie file.
-        driver_path (str): Path to the chromedriver executable.
+        driver_path (str): Path to the chromedriver executable (optional, falls back to webdriver-manager).
         permanent_notifications_ref (list): A reference to the list of permanent notifications.
 
     Returns:
@@ -60,23 +62,43 @@ def get_and_save_web_session(service_name, login_url, session_file, driver_path,
     """
 
     print(f"\n--- {service_name} Login Process ---")
-
     print(f"\n--- {login_url} login url debug ---")
-    print(f"\n--- {driver_path} driver path ---")
-    time.sleep(5)
-
+    
     if not SELENIUM_AVAILABLE:
-        permanent_notifications_ref.append(f"ERROR: Selenium library not found for {service_name} login.")
+        permanent_notifications_ref.append(f"ERROR: Selenium and webdriver-manager libraries not found for {service_name} login.")
+        print(f"ERROR: Selenium and webdriver-manager libraries not found for {service_name} login.")
+        time.sleep(5)
         return False
 
-    if not login_url or not os.path.exists(driver_path):
-        permanent_notifications_ref.append(f"ERROR: URL or CHROME_DRIVER_PATH is invalid for {service_name} in config.json")
+    if not login_url:
+        permanent_notifications_ref.append(f"ERROR: Login URL is invalid for {service_name} in config.json")
+        print(f"ERROR: Login URL is invalid for {service_name} in config.json")
+        time.sleep(5)
         return False
 
     print(f"\n--- {service_name} Login Process ---")
     print("-> Starting browser...")
+    
+    # Try to get ChromeDriver using webdriver-manager first, fallback to configured path
+    driver_executable_path = None
     try:
-        service = Service(executable_path=driver_path)
+        print("-> Using webdriver-manager to get ChromeDriver...")
+        driver_executable_path = ChromeDriverManager().install()
+        print(f"-> ChromeDriver downloaded to: {driver_executable_path}")
+    except Exception as e:
+        print(f"-> webdriver-manager failed: {e}")
+        # Fallback to configured path if webdriver-manager fails
+        if driver_path and os.path.exists(driver_path):
+            print(f"-> Falling back to configured ChromeDriver: {driver_path}")
+            driver_executable_path = driver_path
+        else:
+            permanent_notifications_ref.append(f"ERROR: Cannot find ChromeDriver for {service_name}. webdriver-manager failed and no valid CHROME_DRIVER_PATH configured.")
+            print(f"ERROR: Cannot find ChromeDriver for {service_name}. webdriver-manager failed and no valid CHROME_DRIVER_PATH configured.")
+            time.sleep(5)
+            return False
+    
+    try:
+        service = Service(executable_path=driver_executable_path)
         driver = webdriver.Chrome(service=service, options=Options())
         driver.get(login_url)
 

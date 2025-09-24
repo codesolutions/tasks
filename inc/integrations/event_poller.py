@@ -71,9 +71,8 @@ def event_notification_poller(data_lock, data_ref):
             recurring = copy.deepcopy(data_ref.get("recurring_events", []))
 
         # Process external calendar events
-        from jira_tracker import external_meetings, external_meetings_lock
-        with external_meetings_lock:
-            current_external_meetings = copy.deepcopy(external_meetings)
+        from inc.integrations.calendar_poller import calendar_poller
+        current_external_meetings = calendar_poller.get_meetings()
 
         for event in current_external_meetings:
             try:
@@ -118,7 +117,14 @@ def event_notification_poller(data_lock, data_ref):
                 minutes_until = int(time_diff.total_seconds() / 60)
 
                 event_time_str = event['datetime'].strftime('%H:%M')
-                event_id = f"{event['type']}_{event['details']}_{event['datetime'].strftime('%Y%m%d%H%M')}"
+                
+                # Create a proper event ID based on event type
+                if event['type'] == 'external_meeting':
+                    event_details = event.get('details', {})
+                    event_id = f"{event['type']}_{event_details.get('title', 'unknown')}_{event['datetime'].strftime('%Y%m%d%H%M')}"
+                else:
+                    event_details_str = str(event['details']) if event['details'] else 'unknown'
+                    event_id = f"{event['type']}_{event_details_str}_{event['datetime'].strftime('%Y%m%d%H%M')}"
 
                 notification_title = ""
                 notification_body = ""

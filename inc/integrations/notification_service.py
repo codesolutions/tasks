@@ -19,7 +19,7 @@ class NotificationService:
         self._sent_notifications: Set[str] = set()
     
     def send_notification(self, title: str, message: str, 
-                         prevent_duplicates: bool = True) -> bool:
+                         prevent_duplicates: bool = False) -> bool:
         """
         Send a desktop notification.
         

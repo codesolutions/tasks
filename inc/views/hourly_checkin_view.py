@@ -2,10 +2,15 @@ import curses
 from datetime import datetime, timedelta
 from inc.helpers import t
 from inc.views.base_view import format_timedelta_minutes
+from inc.utils.constants import (
+    COLOR_PAIR_STANDOUT, COLOR_PAIR_HELP_OVERLAY
+)
 
 def display_hourly_checkin_view(stdscr, data, selected_task_index=-1):
     height, width = stdscr.getmaxyx()
     stdscr.clear()
+  
+    stdscr.bkgd(' ', curses.color_pair(COLOR_PAIR_HELP_OVERLAY))
     
     pending_checkin = data.get("pending_checkin", {})
     if not pending_checkin:

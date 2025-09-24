@@ -57,6 +57,9 @@ def display_main_view(stdscr, data, command_buffer="", full_redraw=False, select
     try:
         height, width = stdscr.getmaxyx()
     except curses.error: return False
+
+    # stdscr.bkgd(' ', curses.color_pair(COLOR_PAIR_HELP_OVERLAY))
+
     now_time_str = datetime.now().strftime("%H:%M:%S")
     now_dt = datetime.now()
     today_start = now_dt.replace(hour=0, minute=0, second=0, microsecond=0)

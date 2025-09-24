@@ -11,12 +11,12 @@ This is a **Terminal Project Tracker** - a curses-based Python application for d
 ### Dependencies
 ```bash
 # Install Python dependencies
-pip install requests selenium
+pip install requests selenium webdriver-manager
 
 # Preferred: Use virtual environment
 python3 -m venv .venv
 source .venv/bin/activate
-python3 -m pip install requests selenium
+python3 -m pip install requests selenium webdriver-manager
 
 # Linux desktop notifications
 sudo apt-get install notify-send xdotool  # Debian/Ubuntu
@@ -146,6 +146,13 @@ python3 jira_tracker.py
 
 The application expects these external tools to be available:
 - Chrome/Chromium browser for session capture
-- ChromeDriver binary for Selenium automation
+- **ChromeDriver** - Automatically managed by webdriver-manager (downloads correct version automatically)
 - `notify-send` for desktop notifications
 - `xdotool` for window management
+
+### ChromeDriver Management
+The application now uses **webdriver-manager** to automatically handle ChromeDriver versions:
+- Automatically downloads the correct ChromeDriver version for your Chrome installation
+- No manual ChromeDriver setup required
+- Falls back to `CHROME_DRIVER_PATH` configuration if webdriver-manager fails
+- Eliminates version compatibility issues

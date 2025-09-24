@@ -13,7 +13,7 @@
     ]
     "JIRA_URL": "https://your_org_here.atlassian.net",
     "JIRA_SESSION_FILE": "jira_session.pkl",
-    "CHROME_DRIVER_PATH": "chromedriver-linux64/chromedriver",
+    "CHROME_DRIVER_PATH": "",
     "TRELLO_URL": "https://trello.com",
     "TRELLO_SESSION_FILE": "trello_session.pkl",
     "CALENDAR_CSV": "https://docs.google.com/spreadsheets/d/e/YOUR_EXPORTED_CALENDAR_CSV_HERE/pub?gid=0&single=true&output=csv",

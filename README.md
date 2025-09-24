@@ -29,14 +29,14 @@ A modern, terminal-based project tracking application with a **modular command s
 
 ## ⚙️ Setup & Configuration
 
-1.  **Dependencies**: Ensure you have Python 3 and the `requests` library installed.
+1.  **Dependencies**: Ensure you have Python 3 and the required libraries installed.
 
     ```bash
-    pip install requests selenium beautifulsoup4 lxml
+    pip install requests selenium beautifulsoup4 lxml webdriver-manager
     # OR if that is not working, add virtual env (preferred):
     python3 -m venv .venv
     source .venv/bin/activate
-    python3 -m pip install requests selenium beautifulsoup4 lxml
+    python3 -m pip install requests selenium beautifulsoup4 lxml webdriver-manager
     ```
 
     For desktop notifications on Linux, the following tools are required:
@@ -90,7 +90,7 @@ A modern, terminal-based project tracking application with a **modular command s
       * `BROWSER_COMMAND`: A list containing the command and arguments to launch a web browser for meeting links.
       * `JIRA_URL`: The URL of your Jira instance.
       * `JIRA_SESSION_FILE`: The file to store your Jira session.
-      * `CHROME_DRIVER_PATH`: The path to your chromedriver executable.
+      * `CHROME_DRIVER_PATH`: (Optional) The path to your chromedriver executable. If not provided or invalid, webdriver-manager will automatically download the correct ChromeDriver version.
       * `TRELLO_URL`: The URL of your Trello instance.
       * `TRELLO_SESSION_FILE`: The file to store your Trello session.
       * `CALENDAR_CSV`: The URL to your external calendar in CSV format.
