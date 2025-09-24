@@ -17,6 +17,7 @@ import requests
 import threading
 import logging
 from datetime import datetime, date
+from typing import Dict, List, Optional, Any
 
 import inc.config_manager
 from inc.utils.constants import *
@@ -24,6 +25,7 @@ from inc.integrations.notification_service import send_desktop_notification
 from inc.core.data_manager import data_manager
 from inc.utils.formatters import format_subtask_for_title
 from inc.helpers import t
+from inc.utils.pr_formatters import overall_status_badge
 
 def convert_to_api_url(pr_url):
     """Convert a pull request web URL to its API URL."""
@@ -32,6 +34,128 @@ def convert_to_api_url(pr_url):
         parts = match.groupdict()
         return f"{inc.config_manager.config.get('STASH_URL')}/rest/api/1.0/projects/{parts['projectKey']}/repos/{parts['repositorySlug']}/pull-requests/{parts['pullRequestId']}"
     return None
+
+
+def fetch_pr_metadata(api_url: str, headers: Dict[str, str]) -> Optional[Dict[str, Any]]:
+    """Fetch PR metadata including basic info and reviewers."""
+    try:
+        response = requests.get(api_url, headers=headers, timeout=10)
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching PR metadata from {api_url}: {e}", file=sys.stderr)
+        return None
+
+
+def fetch_pr_activities(api_url: str, headers: Dict[str, str]) -> Optional[Dict[str, Any]]:
+    """Fetch PR activities including comments and approvals."""
+    try:
+        activities_url = f"{api_url}/activities"
+        response = requests.get(activities_url, headers=headers, timeout=10)
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching PR activities from {activities_url}: {e}", file=sys.stderr)
+        return None
+
+
+def fetch_pr_comments(api_url: str, headers: Dict[str, str]) -> Optional[Dict[str, Any]]:
+    """Fetch PR comments separately for more detailed comment data."""
+    try:
+        comments_url = f"{api_url}/comments"
+        response = requests.get(comments_url, headers=headers, timeout=10)
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching PR comments from {comments_url}: {e}", file=sys.stderr)
+        return None
+
+
+def build_pr_details_v2(pr_url: str, pr_meta: Dict, activities: Dict, comments: Dict = None) -> Dict[str, Any]:
+    """Build the new v2 pr_details structure from API responses."""
+    
+    pr_details = {
+        "meta": {
+            "id": pr_meta.get("id"),
+            "title": pr_meta.get("title", "Unknown PR"),
+            "description": pr_meta.get("description", ""),
+            "author": {
+                "id": pr_meta.get("author", {}).get("user", {}).get("name", "unknown"),
+                "displayName": pr_meta.get("author", {}).get("user", {}).get("displayName", "Unknown"),
+                "emailAddress": pr_meta.get("author", {}).get("user", {}).get("emailAddress", "")
+            },
+            "created": pr_meta.get("createdDate", 0),  # Unix timestamp
+            "updated": pr_meta.get("updatedDate", 0),  # Unix timestamp
+            "url": pr_url,
+            "state": pr_meta.get("state", "OPEN"),
+            "merge_status": "CAN_MERGE" if pr_meta.get("properties", {}).get("mergeResult", {}).get("outcome") == "CLEAN" else "CANNOT_MERGE"
+        },
+        "reviewers": [],
+        "comments": [],
+        "diffs": [],  # Will be populated later if needed
+        "last_synced": datetime.now().isoformat() + 'Z',
+        "version": 2
+    }
+    
+    # Convert unix timestamps to ISO format
+    if isinstance(pr_details["meta"]["created"], (int, float)):
+        pr_details["meta"]["created"] = datetime.fromtimestamp(pr_details["meta"]["created"] / 1000).isoformat() + 'Z'
+    if isinstance(pr_details["meta"]["updated"], (int, float)):
+        pr_details["meta"]["updated"] = datetime.fromtimestamp(pr_details["meta"]["updated"] / 1000).isoformat() + 'Z'
+    
+    # Process reviewers
+    for reviewer in pr_meta.get("reviewers", []):
+        user = reviewer.get("user", {})
+        status = reviewer.get("status", "UNAPPROVED")
+        
+        reviewer_data = {
+            "id": user.get("name", "unknown"),
+            "displayName": user.get("displayName", "Unknown"),
+            "status": status,
+            "approved_date": None
+        }
+        
+        # Find approval date from activities if approved
+        if status == "APPROVED":
+            for activity in activities.get("values", []):
+                if (activity.get("action") == "APPROVED" and 
+                    activity.get("user", {}).get("name") == user.get("name")):
+                    if isinstance(activity.get("createdDate"), (int, float)):
+                        reviewer_data["approved_date"] = datetime.fromtimestamp(activity["createdDate"] / 1000).isoformat() + 'Z'
+                    break
+        
+        pr_details["reviewers"].append(reviewer_data)
+    
+    # Process comments from activities
+    for activity in activities.get("values", []):
+        if activity.get("action") == "COMMENTED":
+            comment = activity.get("comment")
+            if comment:
+                comment_data = {
+                    "id": str(comment.get("id", "unknown")),
+                    "parent_id": str(comment.get("parent", {}).get("id")) if comment.get("parent") else None,
+                    "author": {
+                        "id": comment.get("author", {}).get("name", "unknown"),
+                        "displayName": comment.get("author", {}).get("displayName", "Unknown")
+                    },
+                    "text": comment.get("text", ""),
+                    "created": comment.get("createdDate", 0),
+                    "updated": comment.get("updatedDate", 0),
+                    "imported": False
+                }
+                
+                # Convert timestamps
+                if isinstance(comment_data["created"], (int, float)):
+                    comment_data["created"] = datetime.fromtimestamp(comment_data["created"] / 1000).isoformat() + 'Z'
+                if isinstance(comment_data["updated"], (int, float)):
+                    comment_data["updated"] = datetime.fromtimestamp(comment_data["updated"] / 1000).isoformat() + 'Z'
+                
+                pr_details["comments"].append(comment_data)
+    
+    # Sort comments by creation date
+    pr_details["comments"].sort(key=lambda c: c.get("created", ""))
+    
+    return pr_details
 
 def check_for_unhandled_comments(activities, my_user_id):
     """Check if there are unhandled comments in PR activities."""
@@ -50,7 +174,7 @@ def check_for_unhandled_comments(activities, my_user_id):
     return unhandled_comments
 
 def poll_pull_requests(data_lock, data_ref):
-    """Poll pull request statuses and update data."""
+    """Poll pull request statuses and update data with enhanced v2 schema."""
     api_token = inc.config_manager.config.get("API_TOKEN")
     my_user_id = inc.config_manager.config.get("USER_ID")
 
@@ -70,102 +194,107 @@ def poll_pull_requests(data_lock, data_ref):
                     pr_url = original_subtask.get("pr_url")
                     pr_status = original_subtask.get("pr_status")
 
-                    if original_subtask.get("status") == "hidden" or not pr_url or pr_status == 'merged':
+                    if original_subtask.get("status") == "hidden" or not pr_url:
                         continue
+                    
+                    # Skip polling if PR is already merged AND we have recent data (< 1 hour old)
+                    if pr_status == 'merged':
+                        existing_pr_details = original_subtask.get('pr_details', {})
+                        if existing_pr_details.get('version') == 2:
+                            last_synced = existing_pr_details.get('last_synced')
+                            if last_synced:
+                                from datetime import datetime
+                                try:
+                                    last_sync_time = datetime.fromisoformat(last_synced.replace('Z', '+00:00'))
+                                    now = datetime.now(last_sync_time.tzinfo)
+                                    # Skip if synced within last hour
+                                    if (now - last_sync_time).total_seconds() < 3600:
+                                        continue
+                                except:
+                                    pass  # If parsing fails, continue with polling
 
                     api_url = convert_to_api_url(pr_url)
                     if not api_url: 
                         continue
 
                     headers = {"Authorization": f"Bearer {api_token}", "Accept": "application/json;charset=UTF-8"}
+                    
                     try:
-                        reviewers_response = requests.get(api_url, headers=headers, timeout=10)
-                        reviewers_response.raise_for_status()
-                        reviewers = reviewers_response.json()
-
-                        api_url = f"{convert_to_api_url(pr_url)}/activities"
-                        response = requests.get(api_url, headers=headers, timeout=10)
-                        response.raise_for_status()
-                        activities = response.json()
-
-                        is_merged = False
-                        unique_approvers = set()
-                        for activity in activities.get("values", []):
-                            action = activity.get("action")
-                            if action == "MERGED":
-                                is_merged = True
-                                break
-                            if action == "APPROVED":
-                                approver_id = activity.get("user", {}).get("id")
-                                if approver_id:
-                                    unique_approvers.add(approver_id)
-
-                        # Format approvers
-                        approvers_formatted = []
-                        approver_count = 0
-                        total_reviewers = len(reviewers.get('reviewers', []))
-                        for r in reviewers.get('reviewers', []):
-                            status_emoji = "❓" # Not responded
-                            if r['status'] == 'APPROVED':
-                                status_emoji = "✅"
-                                approver_count += 1
-                            elif r['status'] == 'NEEDS_WORK':
-                                status_emoji = "❌"
-                            approvers_formatted.append(f"{status_emoji} {r['user']['displayName']}")
-
-                        # Determine overall status text
-                        status_text = "waiting"
-                        if activities.get('state') == 'MERGED':
-                            status_text = "merged"
-                        elif activities.get('state') == 'DECLINED':
-                            status_text = "declined"
-                        elif approver_count > 0:
-                            status_text = f"approved ({approver_count}/{total_reviewers})"
-
-                        # Store in the main data object
-                        original_subtask = data_ref["sub_tasks"][ticket][subtask_name]
-                        original_subtask['pr_details'] = {
-                            'status_text': status_text,
-                            'approvers_formatted': approvers_formatted
-                        }
+                        # Fetch PR metadata (reviewers, basic info)
+                        pr_meta = fetch_pr_metadata(api_url, headers)
+                        if not pr_meta:
+                            continue
+                            
+                        # Fetch activities (comments, approvals, merges)
+                        activities = fetch_pr_activities(api_url, headers)
+                        if not activities:
+                            continue
+                        
+                        # Build new v2 pr_details structure
+                        pr_details_v2 = build_pr_details_v2(pr_url, pr_meta, activities)
+                        
+                        # Merge with any existing imported comments from migration
+                        existing_pr_details = original_subtask.get('pr_details', {})
+                        if existing_pr_details.get('version') == 2:
+                            # Preserve imported comments
+                            imported_comments = [c for c in existing_pr_details.get('comments', []) if c.get('imported')]
+                            # Combine with new comments (avoid duplicates by ID)
+                            existing_ids = {c['id'] for c in pr_details_v2['comments']}
+                            for imported_comment in imported_comments:
+                                if imported_comment['id'] not in existing_ids:
+                                    pr_details_v2['comments'].append(imported_comment)
+                            # Re-sort by creation date
+                            pr_details_v2['comments'].sort(key=lambda c: c.get('created', ''))
+                        
+                        # Store the new pr_details
+                        original_subtask['pr_details'] = pr_details_v2
                         data_changed = True
-
-                        if is_merged:
+                        
+                        # Store in cache for persistence across restarts
+                        from inc.integrations.pr_cache import store_pr_details_in_cache
+                        store_pr_details_in_cache(pr_url, pr_details_v2)
+                        
+                        # Calculate derived status for backward compatibility
+                        overall_status, _ = overall_status_badge(pr_details_v2)
+                        
+                        # Check for state changes to send notifications
+                        state = pr_details_v2['meta']['state']
+                        if state == 'MERGED':
                             if pr_status != 'merged':
                                 original_subtask['pr_status'] = 'merged'
+                                # Clean up old PR notes
                                 notes = original_subtask.get('notes', [])
-                                original_subtask['notes'] = [n for n in notes if not n.startswith("UNHANDLED") and not n.startswith(t('polling_note_approved'))]
+                                original_subtask['notes'] = [n for n in notes if not n.startswith("*PR* ") and not n.startswith(t('polling_note_approved'))]
                                 data_changed = True
-                                send_desktop_notification(t('notification_pr_merged_title', main_task=ticket, sub_task=format_subtask_for_title(subtask_name)), t('notification_pr_merged_body', pr_url=pr_url))
-                        elif len(unique_approvers) >= 2:
+                                send_desktop_notification(
+                                    t('notification_pr_merged_title', main_task=ticket, sub_task=format_subtask_for_title(subtask_name)), 
+                                    t('notification_pr_merged_body', pr_url=pr_details_v2['meta']['url'])
+                                )
+                        elif 'approved' in overall_status:
                             if pr_status != 'approved':
                                 original_subtask['pr_status'] = 'approved'
+                                # Clean up old unhandled comment notes
                                 notes = original_subtask.get('notes', [])
-                                notes_to_keep = [n for n in notes if not n.startswith("UNHANDLED")]
+                                notes_to_keep = [n for n in notes if not n.startswith("*PR* ")]
                                 if t('polling_note_approved') not in notes_to_keep:
                                     notes_to_keep.append(t('polling_note_approved'))
                                 original_subtask['notes'] = notes_to_keep
                                 data_changed = True
-                                send_desktop_notification(t('notification_pr_approved_title', main_task=ticket, sub_task=format_subtask_for_title(subtask_name)), t('notification_pr_approved_body', pr_url=pr_url))
+                                send_desktop_notification(
+                                    t('notification_pr_approved_title', main_task=ticket, sub_task=format_subtask_for_title(subtask_name)), 
+                                    t('notification_pr_approved_body', pr_url=pr_details_v2['meta']['url'])
+                                )
                         else:
-                            notes = original_subtask.get("notes", [])
-                            notes_without_unhandled = [n for n in notes if not n.startswith("*PR* ")]
-                            if len(notes_without_unhandled) < len(notes):
-                                original_subtask["notes"] = notes_without_unhandled
-                                data_changed = True
-
+                            # Check for unhandled comments (comments from others without replies from user)
                             unhandled_comments = check_for_unhandled_comments(activities, my_user_id)
                             if unhandled_comments:
                                 if pr_status != 'attention_needed':
                                     original_subtask['pr_status'] = 'attention_needed'
                                     data_changed = True
-                                    send_desktop_notification(t('notification_pr_unhandled_title', main_task=ticket, sub_task=format_subtask_for_title(subtask_name)), t('notification_pr_unhandled_body', pr_url=pr_url))
-
-                                for comment in unhandled_comments:
-                                    note = t('polling_note_unhandled_comment', author=comment['author']['displayName'], text=comment['text'])
-                                    if note not in original_subtask["notes"]:
-                                        original_subtask["notes"].append(note)
-                                        data_changed = True
+                                    send_desktop_notification(
+                                        t('notification_pr_unhandled_title', main_task=ticket, sub_task=format_subtask_for_title(subtask_name)), 
+                                        t('notification_pr_unhandled_body', pr_url=pr_details_v2['meta']['url'])
+                                    )
                             else:
                                 if pr_status == 'attention_needed':
                                     original_subtask['pr_status'] = None
@@ -178,7 +307,143 @@ def poll_pull_requests(data_lock, data_ref):
             if data_changed:
                 data_manager.save_data(data_ref)
 
-        time.sleep(300)
+        time.sleep(60)  # Poll every 1 minute for faster updates
+
+
+def poll_pr_data_sync(data_ref):
+    """Synchronous PR polling for integration with main polling cycle."""
+    api_token = inc.config_manager.config.get("API_TOKEN")
+    my_user_id = inc.config_manager.config.get("USER_ID")
+    
+    if not api_token or api_token == "PASTE_YOUR_BEARER_TOKEN_HERE":
+        return  # No valid API token, skip PR polling
+    
+    data_changed = False
+    
+    # Poll PR data for all subtasks with PR URLs
+    for ticket, subtasks in data_ref.get("sub_tasks", {}).items():
+        if not isinstance(subtasks, dict): 
+            continue
+        for subtask_name, subtask_details in subtasks.items():
+            if not isinstance(subtask_details, dict): 
+                continue
+
+            pr_url = subtask_details.get("pr_url")
+            pr_status = subtask_details.get("pr_status")
+
+            if subtask_details.get("status") == "hidden" or not pr_url:
+                continue
+            
+            # Skip polling if PR is already merged AND we have recent data (< 1 hour old)
+            if pr_status == 'merged':
+                existing_pr_details = subtask_details.get('pr_details', {})
+                if existing_pr_details.get('version') == 2:
+                    last_synced = existing_pr_details.get('last_synced')
+                    if last_synced:
+                        from datetime import datetime
+                        try:
+                            last_sync_time = datetime.fromisoformat(last_synced.replace('Z', '+00:00'))
+                            now = datetime.now(last_sync_time.tzinfo)
+                            # Skip if synced within last hour
+                            if (now - last_sync_time).total_seconds() < 3600:
+                                continue
+                        except:
+                            pass  # If parsing fails, continue with polling
+
+            api_url = convert_to_api_url(pr_url)
+            if not api_url: 
+                continue
+
+            headers = {"Authorization": f"Bearer {api_token}", "Accept": "application/json;charset=UTF-8"}
+            
+            try:
+                # Fetch PR metadata (reviewers, basic info)
+                pr_meta = fetch_pr_metadata(api_url, headers)
+                if not pr_meta:
+                    continue
+                    
+                # Fetch activities (comments, approvals, merges)
+                activities = fetch_pr_activities(api_url, headers)
+                if not activities:
+                    continue
+                
+                # Build new v2 pr_details structure
+                pr_details_v2 = build_pr_details_v2(pr_url, pr_meta, activities)
+                
+                # Merge with any existing imported comments from migration
+                existing_pr_details = subtask_details.get('pr_details', {})
+                if existing_pr_details.get('version') == 2:
+                    # Preserve imported comments
+                    imported_comments = [c for c in existing_pr_details.get('comments', []) if c.get('imported')]
+                    # Combine with new comments (avoid duplicates by ID)
+                    existing_ids = {c['id'] for c in pr_details_v2['comments']}
+                    for imported_comment in imported_comments:
+                        if imported_comment['id'] not in existing_ids:
+                            pr_details_v2['comments'].append(imported_comment)
+                    # Re-sort by creation date
+                    pr_details_v2['comments'].sort(key=lambda c: c.get('created', ''))
+                
+                # Store the new pr_details
+                subtask_details['pr_details'] = pr_details_v2
+                data_changed = True
+                
+                # Store in cache for persistence across restarts
+                from inc.integrations.pr_cache import store_pr_details_in_cache
+                store_pr_details_in_cache(pr_url, pr_details_v2)
+                
+                # Calculate derived status for backward compatibility
+                overall_status, _ = overall_status_badge(pr_details_v2)
+                
+                # Check for state changes to send notifications
+                state = pr_details_v2['meta']['state']
+                if state == 'MERGED':
+                    if pr_status != 'merged':
+                        subtask_details['pr_status'] = 'merged'
+                        # Clean up old PR notes
+                        notes = subtask_details.get('notes', [])
+                        subtask_details['notes'] = [n for n in notes if not n.startswith("*PR* ") and not n.startswith(t('polling_note_approved'))]
+                        data_changed = True
+                        send_desktop_notification(
+                            t('notification_pr_merged_title', main_task=ticket, sub_task=format_subtask_for_title(subtask_name)), 
+                            t('notification_pr_merged_body', pr_url=pr_details_v2['meta']['url'])
+                        )
+                elif 'approved' in overall_status:
+                    if pr_status != 'approved':
+                        subtask_details['pr_status'] = 'approved'
+                        # Clean up old unhandled comment notes
+                        notes = subtask_details.get('notes', [])
+                        notes_to_keep = [n for n in notes if not n.startswith("*PR* ")]
+                        if t('polling_note_approved') not in notes_to_keep:
+                            notes_to_keep.append(t('polling_note_approved'))
+                        subtask_details['notes'] = notes_to_keep
+                        data_changed = True
+                        send_desktop_notification(
+                            t('notification_pr_approved_title', main_task=ticket, sub_task=format_subtask_for_title(subtask_name)), 
+                            t('notification_pr_approved_body', pr_url=pr_details_v2['meta']['url'])
+                        )
+                else:
+                    # Check for unhandled comments (comments from others without replies from user)
+                    unhandled_comments = check_for_unhandled_comments(activities, my_user_id)
+                    if unhandled_comments:
+                        if pr_status != 'attention_needed':
+                            subtask_details['pr_status'] = 'attention_needed'
+                            data_changed = True
+                            send_desktop_notification(
+                                t('notification_pr_unhandled_title', main_task=ticket, sub_task=format_subtask_for_title(subtask_name)), 
+                                t('notification_pr_unhandled_body', pr_url=pr_details_v2['meta']['url'])
+                            )
+                    else:
+                        if pr_status == 'attention_needed':
+                            subtask_details['pr_status'] = None
+                            data_changed = True
+
+            except requests.exceptions.RequestException:
+                # Silently skip network errors in sync mode to avoid spam
+                continue
+    
+    if data_changed:
+        from inc.core.data_manager import data_manager
+        data_manager.save_data(data_ref)
 
 # Global variable for tracking sent review notifications
 sent_review_notifications = set()

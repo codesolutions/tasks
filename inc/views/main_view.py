@@ -422,12 +422,24 @@ def display_main_view(stdscr, data, command_buffer="", full_redraw=False, select
                         display_text += f" [{status}]"
 
                 pr_status = sub_task_details_obj.get("pr_status")
-                if pr_status == 'attention_needed':
+                
+                # Check PR status from v2 schema first if available
+                pr_details_v2 = sub_task_details_obj.get("pr_details", {})
+                if pr_details_v2 and pr_details_v2.get('version') == 2:
+                    pr_meta = pr_details_v2.get('meta', {})
+                    if pr_meta.get('state') == 'MERGED':
+                        item_attr = curses.color_pair(COLOR_PAIR_TASK_ALL_SUBTASKS_DONE)  # Green for merged
+                    elif pr_status == 'attention_needed':
+                        item_attr = curses.color_pair(COLOR_PAIR_PR_UNHANDLED)  # Red for attention needed
+                    elif pr_status == 'approved':
+                        item_attr = curses.color_pair(COLOR_PAIR_PR_APPROVED)  # Green for approved
+                    # Fall through to other conditions if no PR status
+                elif pr_status == 'attention_needed':
                     item_attr = curses.color_pair(COLOR_PAIR_PR_UNHANDLED)
-
                 elif pr_status == 'approved':
                     item_attr = curses.color_pair(COLOR_PAIR_PR_APPROVED)
-
+                elif pr_status == 'merged':
+                    item_attr = curses.color_pair(COLOR_PAIR_TASK_ALL_SUBTASKS_DONE)
                 elif cached_item and (cached_item.get('new_jira_comment') or cached_item.get('new_trello_comment')):
                     item_attr = curses.color_pair(COLOR_PAIR_NEW_COMMENT)
 
@@ -466,18 +478,50 @@ def display_main_view(stdscr, data, command_buffer="", full_redraw=False, select
             sub_task_with_desc = sel_sub_name
             notes_to_show_preview = sel_sub_details.get("notes", []).copy()
 
-            if sel_sub_details.get("pr_url"):
+            # Handle PR information with new v2 schema
+            pr_details_v2 = sel_sub_details.get("pr_details", {})
+            
+            # If PR details are missing but PR URL exists, try to restore from cache
+            if (sel_sub_details.get("pr_url") and 
+                (not pr_details_v2 or pr_details_v2.get('version') != 2)):
+                from inc.integrations.pr_cache import get_pr_details_from_cache
+                cached_pr_details = get_pr_details_from_cache(sel_sub_details["pr_url"])
+                if cached_pr_details:
+                    sel_sub_details["pr_details"] = cached_pr_details
+                    pr_details_v2 = cached_pr_details
+            
+            if pr_details_v2 and pr_details_v2.get('version') == 2:
+                pr_meta = pr_details_v2.get('meta', {})
+                task_info_to_show.insert(0, f"PR: {pr_meta.get('url', sel_sub_details.get('pr_url', 'Unknown URL'))}")
+                
+                # Use new formatter to get overall status
+                from inc.utils.pr_formatters import overall_status_badge
+                status_text, _ = overall_status_badge(pr_details_v2)
+                
+                # Format reviewers with new schema
+                reviewers = pr_details_v2.get('reviewers', [])
+                if reviewers:
+                    from inc.utils.pr_formatters import status_badge
+                    reviewer_badges = []
+                    for reviewer in reviewers[:4]:  # Limit to 4 reviewers for space
+                        badge, _ = status_badge(reviewer.get('status', 'UNAPPROVED'))
+                        reviewer_badges.append(f"{badge} {reviewer.get('displayName', 'Unknown')}")
+                    
+                    approvers_str = f"PR {status_text}: {', '.join(reviewer_badges)}"
+                    if len(reviewers) > 4:
+                        approvers_str += f" (+{len(reviewers) - 4} more)"
+                    task_info_to_show.insert(1, approvers_str)
+                else:
+                    task_info_to_show.insert(1, f"PR {status_text}: No reviewers")
+            elif sel_sub_details.get("pr_url"):  # Fallback for old format
                 task_info_to_show.insert(0, f"PR: {sel_sub_details.get('pr_url')}")
-
-            pr_details = sel_sub_details.get("pr_details", {})
-            if pr_details:
-                # Draw overall status
-                status_text = pr_details.get('status_text', 'waiting')
-                #task_info_to_show.insert(1, f"PR Status: {status_text}")
-
-                # Draw approvers with emojis
-                approvers_str = "PR " + status_text + ": " + ", ".join(pr_details.get('approvers_formatted', []))
-                task_info_to_show.insert(1, approvers_str)
+                # Try to use old pr_details if available
+                old_pr_details = sel_sub_details.get("pr_details", {})
+                if old_pr_details and old_pr_details.get('status_text'):
+                    status_text = old_pr_details.get('status_text', 'waiting')
+                    approvers_formatted = old_pr_details.get('approvers_formatted', [])
+                    approvers_str = "PR " + status_text + ": " + ", ".join(approvers_formatted)
+                    task_info_to_show.insert(1, approvers_str)
 
 
             cached_item = cache_copy.get(sel_sub_name, {})
@@ -559,20 +603,9 @@ def display_main_view(stdscr, data, command_buffer="", full_redraw=False, select
                                             attr=curses.color_pair(COLOR_PAIR_PAUSED))
             row += lines_used_note
 
-        notes_with_unhandled = [n for n in notes_to_show_preview if n.startswith("*PR* ")]
-        for note_idx, note in enumerate(notes_with_unhandled[:10]):
-            if content_height_obj[0] <= 0 : break
-            if effective_main_width <= 4: break
-
-            prefix_note = f"| "
-            start_col_note = 4
-            max_text_width_note = effective_main_width - start_col_note - len(prefix_note)
-            if max_text_width_note < 0 : max_text_width_note = 0
-            lines_used_note = _draw_wrapped_text(stdscr, note, row, start_col_note,
-                                            max_text_width_note, effective_main_width, content_height_obj,
-                                            prefix=prefix_note, subsequent_indent_offset=len(prefix_note),
-                                            attr=curses.color_pair(COLOR_PAIR_PAUSED))
-            row += lines_used_note
+        # PR comments are now handled by the new schema and displayed separately
+        # Only show regular notes (PR comments were migrated out of notes)
+        regular_notes = [n for n in notes_to_show_preview if not n.startswith("*PR* ")]
 
 
         if len(task_info_to_show):
@@ -684,9 +717,20 @@ def display_main_view(stdscr, data, command_buffer="", full_redraw=False, select
             row += lines_used_note
 
 
-        notes_without_unhandled = [n for n in notes_to_show_preview if not n.startswith("*PR* ")]
-
-        for note_idx, note in enumerate(notes_without_unhandled[:10]):
+        # Display PR comments if available with v2 schema
+        if (selected_subtask_idx != -1 and 0 <= selected_subtask_idx < len(subtask_list_to_use)):
+            sel_sub_name, sel_sub_details = subtask_list_to_use[selected_subtask_idx]
+            pr_details_v2 = sel_sub_details.get("pr_details", {})
+            if pr_details_v2 and pr_details_v2.get('version') == 2:
+                from inc.utils.pr_display import render_pr_comments_section
+                lines_used = render_pr_comments_section(
+                    stdscr, pr_details_v2, row, effective_main_width, content_height_obj,
+                    max_comments=5, start_col=0, show_header=True, show_footer=True
+                )
+                row += lines_used
+        
+        # Display regular notes (without PR comments)
+        for note_idx, note in enumerate(regular_notes[:10]):
             if content_height_obj[0] <= 0 : break
             if effective_main_width <= 4: break
             prefix_note = f"- "
@@ -698,7 +742,7 @@ def display_main_view(stdscr, data, command_buffer="", full_redraw=False, select
                                             prefix=prefix_note, subsequent_indent_offset=len(prefix_note))
             row += lines_used_note
 
-        if len(notes_without_unhandled) > 10 and content_height_obj[0] > 0 and effective_main_width > 7:
+        if len(regular_notes) > 10 and content_height_obj[0] > 0 and effective_main_width > 7:
             stdscr.addstr(row, 4, t('ui_more_notes')[:effective_main_width-4])
             row+=1; content_height_obj[0]-=1
 

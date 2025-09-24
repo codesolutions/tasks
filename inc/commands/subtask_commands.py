@@ -7,6 +7,7 @@ adding subtasks, hiding subtasks, focusing on subtasks, etc.
 
 import logging
 import re
+import sys
 import time
 from datetime import datetime
 from typing import List
@@ -520,6 +521,14 @@ class AddPRCommand(BaseCommand):
             
             data["sub_tasks"][current_ticket][subtask_name]["pr_url"] = pr_url
             data["sub_tasks"][current_ticket][subtask_name]["pr_status"] = None  # Reset status
+            
+            # Trigger immediate PR polling for this subtask
+            try:
+                from inc.integrations.pr_monitor import poll_pr_data_sync
+                poll_pr_data_sync(data)
+            except Exception as e:
+                # Don't fail the command if PR polling fails
+                print(f"Warning: PR polling failed after adding PR URL: {e}", file=sys.stderr)
             
             return CommandResult(
                 success=True,

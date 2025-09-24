@@ -166,6 +166,26 @@
     "time_logged_meeting": "Logged {duration} meeting",
     "help_time_log": "L                   - View time log",
     "help_work_session": "startday/endday     - Start/end work session",
-    "help_work_pause": "pause/resume        - Pause/resume work session"
+    "help_work_pause": "pause/resume        - Pause/resume work session",
+    "ui_pr_panel_title": "Pull Request Details",
+    "ui_pr_header": "[PR] {title} - {status}",
+    "ui_pr_author_created": "Author: {author}  Created: {created}",
+    "ui_pr_reviewers_header": "Reviewers:",
+    "ui_pr_no_reviewers": "No reviewers assigned",
+    "ui_pr_comments_header": "Comments ({count}):",
+    "ui_pr_no_comments": "No comments yet",
+    "ui_pr_comment_by": "— {author} ({time}) —",
+    "ui_pr_comment_more": "[↑↓] Scroll  [c] Open in browser",
+    "ui_pr_status_waiting": "waiting",
+    "ui_pr_status_approved": "approved",
+    "ui_pr_status_approved_partial": "approved ({count}/{total})",
+    "ui_pr_status_needs_work": "needs work",
+    "ui_pr_status_merged": "merged",
+    "ui_pr_status_declined": "declined",
+    "ui_pr_merge_status_ready": "ready to merge",
+    "ui_pr_merge_status_blocked": "merge blocked",
+    "ui_pr_scroll_indicator_up": "↑",
+    "ui_pr_scroll_indicator_down": "↓",
+    "ui_pr_scroll_indicator_both": "↕"
 
 }

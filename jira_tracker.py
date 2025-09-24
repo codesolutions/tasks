@@ -25,7 +25,7 @@ from inc.utils.constants import (
     COLOR_PAIR_DEFAULT, COLOR_PAIR_REVERSE, COLOR_PAIR_GREY, COLOR_PAIR_PAUSED,
     COLOR_PAIR_SELECTED, COLOR_PAIR_TASK_ALL_SUBTASKS_DONE, COLOR_PAIR_TASK_ALL_SUBTASKS_HIDDEN,
     COLOR_PAIR_URGENT_BOX, COLOR_PAIR_PR_UNHANDLED, COLOR_PAIR_PR_APPROVED, COLOR_PAIR_FOCUSED,
-    COLOR_PAIR_PERMANENT_NOTIFICATION, COLOR_PAIR_STANDOUT, COLOR_PAIR_NEW_COMMENT, COLOR_PAIR_HELP_OVERLAY,
+    COLOR_PAIR_PERMANENT_NOTIFICATION, COLOR_PAIR_STANDOUT, COLOR_PAIR_NEW_COMMENT, COLOR_PAIR_HELP_OVERLAY, COLOR_PAIR_CODE,
     VIEW_MAIN, VIEW_DEDICATED_NOTES, VIEW_DAILY_NOTES, VIEW_TIME_LOG, VIEW_HOURLY_CHECKIN,
     DEFAULT_CONTENT_REFRESH_INTERVAL, DEFAULT_CLOCK_REFRESH_INTERVAL
 )
@@ -124,6 +124,7 @@ def setup_colors():
         curses.init_pair(COLOR_PAIR_STANDOUT, curses.COLOR_CYAN, curses.COLOR_BLACK)
         curses.init_pair(COLOR_PAIR_NEW_COMMENT, curses.COLOR_WHITE, curses.COLOR_MAGENTA)
         curses.init_pair(COLOR_PAIR_HELP_OVERLAY, curses.COLOR_WHITE, CUSTOM_BLACK_COLOR_ID)
+        curses.init_pair(COLOR_PAIR_CODE, curses.COLOR_CYAN, bg)
     except:
         pass  # Continue without colors if not supported
 
@@ -199,6 +200,14 @@ def main(stdscr):
 
     # Load application data
     app_data = data_manager.load_data()
+    
+    # Restore PR details from cache for persistence across restarts
+    from inc.integrations.pr_cache import populate_pr_details_from_cache, cleanup_pr_cache
+    cleanup_pr_cache()  # Clean up expired cache entries
+    restored_count = populate_pr_details_from_cache(app_data)
+    if restored_count > 0:
+        data_manager.save_data(app_data)
+    
     jira_cache = load_jira_cache()
     jira_cache_lock = threading.Lock()
     data_lock = threading.Lock()
@@ -232,10 +241,8 @@ def main(stdscr):
     )
     jira_thread.start()
     
-    # Start integrated polling services
-    # Note: These should be refactored to use the integration modules
-    pr_polling_thread = threading.Thread(target=poll_pull_requests, args=(data_lock, app_data), daemon=True)
-    pr_polling_thread.start()
+    # PR polling is now integrated into the main external services polling cycle
+    # No separate thread needed
     
     notification_thread = threading.Thread(target=event_notification_poller, args=(data_lock, app_data), daemon=True)
     notification_thread.start()
@@ -258,6 +265,7 @@ def main(stdscr):
     # External service polling timer
     ext_services_poll_interval = inc.config_manager.config.get("POLL_EXT_SERVICES_INTERVAL_MINUTES", 2) * 60  # Convert to seconds
     last_ext_services_poll_time = 0.0
+    force_pr_poll = False  # Flag to force immediate PR polling
     
     while True:
         current_time = time.time()
@@ -354,13 +362,19 @@ def main(stdscr):
             # Initial state update
             update_current_state()
         
-        # Check if it's time to poll external services (Jira/Trello)
-        should_poll_ext_services = (current_time - last_ext_services_poll_time >= ext_services_poll_interval)
+        # Check if it's time to poll external services (Jira/Trello/PR) or if forced
+        should_poll_ext_services = (current_time - last_ext_services_poll_time >= ext_services_poll_interval) or force_pr_poll
         if should_poll_ext_services:
             with data_lock:
                 from inc.jira import poll_all_visible_subtasks
                 poll_all_visible_subtasks(app_data, jira_cache, jira_cache_lock)
+                
+                # Poll PR data for all visible subtasks with PR URLs
+                from inc.integrations.pr_monitor import poll_pr_data_sync
+                poll_pr_data_sync(app_data)
+                
             last_ext_services_poll_time = current_time
+            force_pr_poll = False  # Reset the force flag
         
         # Handle input
         key = -1
@@ -946,7 +960,9 @@ def main(stdscr):
            (current_time - last_clock_refresh_time >= clock_refresh_interval) or should_refresh_content:
             
             try:
-                display_ui(stdscr, app_data, command_buffer, request_full_redraw, selected_subtask_index, 
+                # UI rendering with data lock protection
+                with data_lock:
+                    display_ui(stdscr, app_data, command_buffer, request_full_redraw, selected_subtask_index,
                           current_view, entity_for_dedicated_notes, current_ticket_subtask_list_visible, 
                           show_help_footer, current_date_for_daily_notes, selected_note_index, 
                           jira_cache, jira_cache_lock, notes_scroll_offset, selected_checkin_task_index)

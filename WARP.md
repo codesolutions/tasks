@@ -84,7 +84,7 @@ The application maintains state in a single `data` dictionary with these key str
 ### Integration Points
 - **Jira**: Fetches ticket status, comments, and metadata via session cookies
 - **Trello**: Card details and comments for tickets with Trello links  
-- **Stash/Bitbucket**: PR status monitoring and notifications
+- **Stash/Bitbucket**: Enhanced PR monitoring with full comment threads, reviewer status, and detailed notifications
 - **Desktop**: Native notifications via `notify-send`
 - **Browser**: Automatic link opening for meetings and external resources
 
@@ -141,6 +141,31 @@ python3 jira_tracker.py
 - `jira_session.pkl` / `trello_session.pkl` - Authentication cookies
 - `config.json` - Application configuration
 - `debug.log` - Application logs
+
+## Enhanced Pull Request Handling
+
+**Version 2.0** introduces a completely refactored PR handling system that separates PR data from regular notes and provides much better readability:
+
+### New PR Features
+- **Dedicated PR Comments Section**: PR comments are no longer mixed with your personal notes
+- **Rich Status Display**: Clear reviewer status with emoji indicators (✅ ❌ ❓)
+- **Enhanced API Integration**: Fetches complete PR metadata, reviewer details, and comment threads
+- **Code Block Formatting**: Proper syntax highlighting for code snippets in comments
+- **Time Stamps**: Relative time display ("2h ago", "3 days ago") for all PR activities
+- **Better Visual Layout**: Bordered sections with clear separation between different data types
+
+### PR Status Indicators
+- 🟢 **Green Background**: PR approved and ready to merge
+- 🔴 **Red Background**: PR needs attention (unhandled comments or needs work)
+- 🟡 **Yellow Background**: PR waiting for reviews
+- 🔘 **Gray Background**: PR merged or declined
+
+### Data Migration
+Existing PR data is automatically migrated to the new format:
+- Old `*PR* author: comment` entries are extracted from notes
+- Converted to structured comment objects with proper metadata  
+- Your personal notes remain unchanged
+- Migration creates automatic backup before changes
 
 ## External Dependencies and Integration Requirements
 
