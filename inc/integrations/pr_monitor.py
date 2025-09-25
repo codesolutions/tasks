@@ -88,7 +88,8 @@ def build_pr_details_v2(pr_url: str, pr_meta: Dict, activities: Dict, comments: 
             "updated": pr_meta.get("updatedDate", 0),  # Unix timestamp
             "url": pr_url,
             "state": pr_meta.get("state", "OPEN"),
-            "merge_status": "CAN_MERGE" if pr_meta.get("properties", {}).get("mergeResult", {}).get("outcome") == "CLEAN" else "CANNOT_MERGE"
+            "merge_status": "CAN_MERGE" if pr_meta.get("properties", {}).get("mergeResult", {}).get("outcome") == "CLEAN" else "CANNOT_MERGE",
+            "notifications": {}  # Track notification states
         },
         "reviewers": [],
         "comments": [],
@@ -233,9 +234,19 @@ def poll_pull_requests(data_lock, data_ref):
                         # Build new v2 pr_details structure
                         pr_details_v2 = build_pr_details_v2(pr_url, pr_meta, activities)
                         
-                        # Merge with any existing imported comments from migration
+                        # Merge with any existing imported comments AND notification state from migration/cache
                         existing_pr_details = original_subtask.get('pr_details', {})
                         if existing_pr_details.get('version') == 2:
+                            # Preserve existing notification state to prevent duplicate desktop notifications
+                            existing_notifications = existing_pr_details.get('meta', {}).get('notifications', {})
+                            if existing_notifications:
+                                if 'meta' not in pr_details_v2:
+                                    pr_details_v2['meta'] = {}
+                                if 'notifications' not in pr_details_v2['meta']:
+                                    pr_details_v2['meta']['notifications'] = {}
+                                pr_details_v2['meta']['notifications'].update(existing_notifications)
+                                # print(f"DEBUG: Preserved notification state for {subtask_name}: {existing_notifications}", file=sys.stderr)
+                            
                             # Preserve imported comments
                             imported_comments = [c for c in existing_pr_details.get('comments', []) if c.get('imported')]
                             # Combine with new comments (avoid duplicates by ID)
@@ -257,48 +268,49 @@ def poll_pull_requests(data_lock, data_ref):
                         # Calculate derived status for backward compatibility
                         overall_status, _ = overall_status_badge(pr_details_v2)
                         
-                        # Check for state changes to send notifications
+                        # Handle notifications and status changes using the new integrated system
+                        from inc.integrations.pr_notifications import handle_pr_notification_changes
+                        
+                        # Determine new status
                         state = pr_details_v2['meta']['state']
+                        new_status = None
+                        
                         if state == 'MERGED':
-                            if pr_status != 'merged':
-                                original_subtask['pr_status'] = 'merged'
-                                # Clean up old PR notes
-                                notes = original_subtask.get('notes', [])
-                                original_subtask['notes'] = [n for n in notes if not n.startswith("*PR* ") and not n.startswith(t('polling_note_approved'))]
-                                data_changed = True
-                                send_desktop_notification(
-                                    t('notification_pr_merged_title', main_task=ticket, sub_task=format_subtask_for_title(subtask_name)), 
-                                    t('notification_pr_merged_body', pr_url=pr_details_v2['meta']['url'])
-                                )
+                            new_status = 'merged'
                         elif 'approved' in overall_status:
-                            if pr_status != 'approved':
-                                original_subtask['pr_status'] = 'approved'
-                                # Clean up old unhandled comment notes
-                                notes = original_subtask.get('notes', [])
-                                notes_to_keep = [n for n in notes if not n.startswith("*PR* ")]
-                                if t('polling_note_approved') not in notes_to_keep:
-                                    notes_to_keep.append(t('polling_note_approved'))
-                                original_subtask['notes'] = notes_to_keep
-                                data_changed = True
-                                send_desktop_notification(
-                                    t('notification_pr_approved_title', main_task=ticket, sub_task=format_subtask_for_title(subtask_name)), 
-                                    t('notification_pr_approved_body', pr_url=pr_details_v2['meta']['url'])
-                                )
+                            new_status = 'approved'
                         else:
-                            # Check for unhandled comments (comments from others without replies from user)
+                            # Check for unhandled comments
                             unhandled_comments = check_for_unhandled_comments(activities, my_user_id)
                             if unhandled_comments:
-                                if pr_status != 'attention_needed':
-                                    original_subtask['pr_status'] = 'attention_needed'
-                                    data_changed = True
-                                    send_desktop_notification(
-                                        t('notification_pr_unhandled_title', main_task=ticket, sub_task=format_subtask_for_title(subtask_name)), 
-                                        t('notification_pr_unhandled_body', pr_url=pr_details_v2['meta']['url'])
-                                    )
+                                new_status = 'attention_needed'
                             else:
-                                if pr_status == 'attention_needed':
-                                    original_subtask['pr_status'] = None
-                                    data_changed = True
+                                new_status = None
+                        
+                        # Update status and handle notifications
+                        if new_status != pr_status:
+                            original_subtask['pr_status'] = new_status
+                            data_changed = True
+                            
+                            # Clean up old PR notes for status changes
+                            if new_status in ['merged', 'approved']:
+                                notes = original_subtask.get('notes', [])
+                                if new_status == 'merged':
+                                    original_subtask['notes'] = [n for n in notes if not n.startswith("*PR* ") and not n.startswith(t('polling_note_approved'))]
+                                elif new_status == 'approved':
+                                    notes_to_keep = [n for n in notes if not n.startswith("*PR* ")]
+                                    if t('polling_note_approved') not in notes_to_keep:
+                                        notes_to_keep.append(t('polling_note_approved'))
+                                    original_subtask['notes'] = notes_to_keep
+                        
+                        # Handle notifications with the new system (with permanent_notifications for threaded version)
+                        from jira_tracker import permanent_notifications
+                        notification_changed = handle_pr_notification_changes(
+                            data_ref, ticket, subtask_name, pr_details_v2, pr_status, new_status, permanent_notifications
+                        )
+                        
+                        if notification_changed:
+                            data_changed = True
 
                     except requests.exceptions.RequestException as e:
                         print(t('polling_err', url=api_url, e=e), file=sys.stderr)
@@ -370,9 +382,19 @@ def poll_pr_data_sync(data_ref):
                 # Build new v2 pr_details structure
                 pr_details_v2 = build_pr_details_v2(pr_url, pr_meta, activities)
                 
-                # Merge with any existing imported comments from migration
+                # Merge with any existing imported comments AND notification state from migration/cache
                 existing_pr_details = subtask_details.get('pr_details', {})
                 if existing_pr_details.get('version') == 2:
+                    # Preserve existing notification state to prevent duplicate desktop notifications
+                    existing_notifications = existing_pr_details.get('meta', {}).get('notifications', {})
+                    if existing_notifications:
+                        if 'meta' not in pr_details_v2:
+                            pr_details_v2['meta'] = {}
+                        if 'notifications' not in pr_details_v2['meta']:
+                            pr_details_v2['meta']['notifications'] = {}
+                        pr_details_v2['meta']['notifications'].update(existing_notifications)
+                        # print(f"DEBUG: Preserved notification state for {subtask_name}: {existing_notifications}", file=sys.stderr)
+                    
                     # Preserve imported comments
                     imported_comments = [c for c in existing_pr_details.get('comments', []) if c.get('imported')]
                     # Combine with new comments (avoid duplicates by ID)
@@ -394,48 +416,48 @@ def poll_pr_data_sync(data_ref):
                 # Calculate derived status for backward compatibility
                 overall_status, _ = overall_status_badge(pr_details_v2)
                 
-                # Check for state changes to send notifications
+                # Handle notifications and status changes using the new integrated system
+                from inc.integrations.pr_notifications import handle_pr_notification_changes
+                
+                # Determine new status
                 state = pr_details_v2['meta']['state']
+                new_status = None
+                
                 if state == 'MERGED':
-                    if pr_status != 'merged':
-                        subtask_details['pr_status'] = 'merged'
-                        # Clean up old PR notes
-                        notes = subtask_details.get('notes', [])
-                        subtask_details['notes'] = [n for n in notes if not n.startswith("*PR* ") and not n.startswith(t('polling_note_approved'))]
-                        data_changed = True
-                        send_desktop_notification(
-                            t('notification_pr_merged_title', main_task=ticket, sub_task=format_subtask_for_title(subtask_name)), 
-                            t('notification_pr_merged_body', pr_url=pr_details_v2['meta']['url'])
-                        )
+                    new_status = 'merged'
                 elif 'approved' in overall_status:
-                    if pr_status != 'approved':
-                        subtask_details['pr_status'] = 'approved'
-                        # Clean up old unhandled comment notes
-                        notes = subtask_details.get('notes', [])
-                        notes_to_keep = [n for n in notes if not n.startswith("*PR* ")]
-                        if t('polling_note_approved') not in notes_to_keep:
-                            notes_to_keep.append(t('polling_note_approved'))
-                        subtask_details['notes'] = notes_to_keep
-                        data_changed = True
-                        send_desktop_notification(
-                            t('notification_pr_approved_title', main_task=ticket, sub_task=format_subtask_for_title(subtask_name)), 
-                            t('notification_pr_approved_body', pr_url=pr_details_v2['meta']['url'])
-                        )
+                    new_status = 'approved'
                 else:
-                    # Check for unhandled comments (comments from others without replies from user)
+                    # Check for unhandled comments
                     unhandled_comments = check_for_unhandled_comments(activities, my_user_id)
                     if unhandled_comments:
-                        if pr_status != 'attention_needed':
-                            subtask_details['pr_status'] = 'attention_needed'
-                            data_changed = True
-                            send_desktop_notification(
-                                t('notification_pr_unhandled_title', main_task=ticket, sub_task=format_subtask_for_title(subtask_name)), 
-                                t('notification_pr_unhandled_body', pr_url=pr_details_v2['meta']['url'])
-                            )
+                        new_status = 'attention_needed'
                     else:
-                        if pr_status == 'attention_needed':
-                            subtask_details['pr_status'] = None
-                            data_changed = True
+                        new_status = None
+                
+                # Update status and handle notifications
+                if new_status != pr_status:
+                    subtask_details['pr_status'] = new_status
+                    data_changed = True
+                    
+                    # Clean up old PR notes for status changes
+                    if new_status in ['merged', 'approved']:
+                        notes = subtask_details.get('notes', [])
+                        if new_status == 'merged':
+                            subtask_details['notes'] = [n for n in notes if not n.startswith("*PR* ") and not n.startswith(t('polling_note_approved'))]
+                        elif new_status == 'approved':
+                            notes_to_keep = [n for n in notes if not n.startswith("*PR* ")]
+                            if t('polling_note_approved') not in notes_to_keep:
+                                notes_to_keep.append(t('polling_note_approved'))
+                            subtask_details['notes'] = notes_to_keep
+                
+                # Handle notifications with the new system (no permanent_notifications passed as it's sync)
+                notification_changed = handle_pr_notification_changes(
+                    data_ref, ticket, subtask_name, pr_details_v2, pr_status, new_status
+                )
+                
+                if notification_changed:
+                    data_changed = True
 
             except requests.exceptions.RequestException:
                 # Silently skip network errors in sync mode to avoid spam

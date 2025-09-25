@@ -143,6 +143,16 @@ def populate_pr_details_from_cache(data: Dict[str, Any]) -> int:
             if needs_restore:
                 cached_pr_details = get_pr_details_from_cache(pr_url)
                 if cached_pr_details:
+                    # Preserve existing notifications when restoring from cache
+                    if existing_pr_details.get('meta', {}).get('notifications'):
+                        if 'meta' not in cached_pr_details:
+                            cached_pr_details['meta'] = {}
+                        if 'notifications' not in cached_pr_details['meta']:
+                            cached_pr_details['meta']['notifications'] = {}
+                        cached_pr_details['meta']['notifications'].update(
+                            existing_pr_details['meta']['notifications']
+                        )
+                    
                     subtask_details["pr_details"] = cached_pr_details
                     restored_count += 1
                     # Restored PR details from cache

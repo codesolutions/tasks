@@ -170,12 +170,13 @@ def display_main_view(stdscr, data, command_buffer="", full_redraw=False, select
 
 
                         subtasks_for_ticket0 = data.get("sub_tasks", {}).get(ticket_name_line0, {})
+                        from inc.integrations.pr_notifications import update_permanent_notifications
+                        update_permanent_notifications(permanent_notifications, ticket_name_line0, subtasks_for_ticket0)
+                        
                         if any(st.get("pr_status") == 'attention_needed' for st in subtasks_for_ticket0.values() if isinstance(st, dict)):
                             attr_line0 = curses.color_pair(COLOR_PAIR_PR_UNHANDLED)
-                            if f"{ticket_name_line0}: PR attention needed!" not in permanent_notifications: permanent_notifications.append(f"{ticket_name_line0}: PR attention needed!")
                         elif any(st.get("pr_status") == 'approved' for st in subtasks_for_ticket0.values() if isinstance(st, dict)):
                             attr_line0 = curses.color_pair(COLOR_PAIR_PR_APPROVED)
-                            if f"{ticket_name_line0}: PR approved. Please merge!" not in permanent_notifications: permanent_notifications.append(f"{ticket_name_line0}: PR approved. Please merge!")
                         elif subtasks_for_ticket0 and all(st_details.get("status") == "hidden" for st_details in subtasks_for_ticket0.values() if isinstance(st_details, dict)):
                             attr_line0 = curses.color_pair(COLOR_PAIR_TASK_ALL_SUBTASKS_HIDDEN)
                         elif (subtasks_for_ticket0 and 
@@ -230,13 +231,14 @@ def display_main_view(stdscr, data, command_buffer="", full_redraw=False, select
                 subtasks_for_this_panel_ticket = data.get("sub_tasks", {}).get(ticket_name_in_panel, {})
                 cached_item = cache_copy.get(inc.helpers.get_jira_ticket_from_url(ticket_name_in_panel))
 
-                # Check for PR status for background color
+                # Check for PR status for background color and update notifications
+                from inc.integrations.pr_notifications import update_permanent_notifications
+                update_permanent_notifications(permanent_notifications, ticket_name_in_panel, subtasks_for_this_panel_ticket)
+                
                 if any(st.get("pr_status") == 'attention_needed' for st in subtasks_for_this_panel_ticket.values() if isinstance(st, dict)):
                     item_attr = curses.color_pair(COLOR_PAIR_PR_UNHANDLED)
-                    if f"{ticket_name_in_panel}: PR attention needed!" not in permanent_notifications: permanent_notifications.append(f"{ticket_name_in_panel}: PR attention needed!")
                 elif any(st.get("pr_status") == 'approved' for st in subtasks_for_this_panel_ticket.values() if isinstance(st, dict)):
                     item_attr = curses.color_pair(COLOR_PAIR_PR_APPROVED)
-                    if f"{ticket_name_in_panel}: PR approved. Please merge!" not in permanent_notifications: permanent_notifications.append(f"{ticket_name_in_panel}: PR approved. Please merge!")
                 elif cached_item and (cached_item.get('new_jira_comment') or cached_item.get('new_trello_comment')):
                     item_attr = curses.color_pair(COLOR_PAIR_NEW_COMMENT)
                 elif subtasks_for_this_panel_ticket and all(st_details.get("status") == "hidden" for st_details in subtasks_for_this_panel_ticket.values() if isinstance(st_details, dict)):
