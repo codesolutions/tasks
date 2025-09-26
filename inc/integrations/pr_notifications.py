@@ -8,6 +8,7 @@ with the existing notification system.
 
 import re
 import sys
+import logging
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from inc.helpers import t
@@ -308,7 +309,7 @@ def handle_pr_notification_changes(
     elif new_status == 'attention_needed':
         notifications = pr_details.get('meta', {}).get('notifications', {})
         if should_send_notification(pr_details, 'ATTENTION_NEEDED'):
-            print(f"DEBUG: Sending ATTENTION_NEEDED desktop notification for {ticket_name}/{subtask_name}", file=sys.stderr)
+            logging.info(f"DEBUG: Sending ATTENTION_NEEDED desktop notification for {ticket_name}/{subtask_name}")
             send_desktop_notification(
                 t('notification_pr_unhandled_title', main_task=ticket_name, sub_task=format_subtask_for_title(subtask_name)),
                 t('notification_pr_unhandled_body', pr_url=pr_details['meta']['url'])
@@ -316,7 +317,7 @@ def handle_pr_notification_changes(
             mark_notification_sent(pr_details, 'ATTENTION_NEEDED')
             data_changed = True
         else:
-            print(f"DEBUG: Skipping ATTENTION_NEEDED desktop notification for {ticket_name}/{subtask_name} - already sent. Notifications: {notifications}", file=sys.stderr)
+            logging.info(f"DEBUG: Skipping ATTENTION_NEEDED desktop notification for {ticket_name}/{subtask_name} - already sent. Notifications: {notifications}")
         
         # Update permanent notifications
         if permanent_notifications:

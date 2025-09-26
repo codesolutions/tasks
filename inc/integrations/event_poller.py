@@ -51,7 +51,7 @@ def open_link_in_browser(url, browser_cmd):
         else:
             webbrowser.open(url)
     except Exception as e:
-        print(t('error_browser_open', e=e), file=sys.stderr)
+        logging.info(t('error_browser_open', e=e))
 
 def event_notification_poller(data_lock, data_ref):
     """A thread that checks for upcoming events and sends notifications."""

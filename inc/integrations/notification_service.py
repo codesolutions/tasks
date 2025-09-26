@@ -48,7 +48,7 @@ class NotificationService:
                 print(f"[{title}] {message}")  # Fallback to console
                 return True
         except Exception as e:
-            print(f"Notification error: {e}")
+            logging.error(f"Notification error: {e}")
             return False
     
     def _send_linux_notification(self, title: str, message: str) -> bool:

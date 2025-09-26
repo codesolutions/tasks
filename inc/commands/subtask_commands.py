@@ -528,7 +528,7 @@ class AddPRCommand(BaseCommand):
                 poll_pr_data_sync(data)
             except Exception as e:
                 # Don't fail the command if PR polling fails
-                print(f"Warning: PR polling failed after adding PR URL: {e}", file=sys.stderr)
+                logging.info(f"Warning: PR polling failed after adding PR URL: {e}")
             
             return CommandResult(
                 success=True,

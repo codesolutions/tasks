@@ -43,7 +43,7 @@ def fetch_pr_metadata(api_url: str, headers: Dict[str, str]) -> Optional[Dict[st
         response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:
-        print(f"Error fetching PR metadata from {api_url}: {e}", file=sys.stderr)
+        logging.info(f"Error fetching PR metadata from {api_url}: {e}")
         return None
 
 
@@ -55,7 +55,7 @@ def fetch_pr_activities(api_url: str, headers: Dict[str, str]) -> Optional[Dict[
         response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:
-        print(f"Error fetching PR activities from {activities_url}: {e}", file=sys.stderr)
+        logging.info(f"Error fetching PR activities from {activities_url}: {e}")
         return None
 
 
@@ -67,7 +67,7 @@ def fetch_pr_comments(api_url: str, headers: Dict[str, str]) -> Optional[Dict[st
         response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:
-        print(f"Error fetching PR comments from {comments_url}: {e}", file=sys.stderr)
+        logging.info(f"Error fetching PR comments from {comments_url}: {e}")
         return None
 
 
@@ -245,7 +245,7 @@ def poll_pull_requests(data_lock, data_ref):
                                 if 'notifications' not in pr_details_v2['meta']:
                                     pr_details_v2['meta']['notifications'] = {}
                                 pr_details_v2['meta']['notifications'].update(existing_notifications)
-                                # print(f"DEBUG: Preserved notification state for {subtask_name}: {existing_notifications}", file=sys.stderr)
+                                logging.info(f"DEBUG: Preserved notification state for {subtask_name}: {existing_notifications}")
                             
                             # Preserve imported comments
                             imported_comments = [c for c in existing_pr_details.get('comments', []) if c.get('imported')]
@@ -313,7 +313,7 @@ def poll_pull_requests(data_lock, data_ref):
                             data_changed = True
 
                     except requests.exceptions.RequestException as e:
-                        print(t('polling_err', url=api_url, e=e), file=sys.stderr)
+                        logging.info(t('polling_err', url=api_url, e=e))
                         pass
 
             if data_changed:
@@ -393,7 +393,7 @@ def poll_pr_data_sync(data_ref):
                         if 'notifications' not in pr_details_v2['meta']:
                             pr_details_v2['meta']['notifications'] = {}
                         pr_details_v2['meta']['notifications'].update(existing_notifications)
-                        # print(f"DEBUG: Preserved notification state for {subtask_name}: {existing_notifications}", file=sys.stderr)
+                        logging.info(f"DEBUG: Preserved notification state for {subtask_name}: {existing_notifications}")
                     
                     # Preserve imported comments
                     imported_comments = [c for c in existing_pr_details.get('comments', []) if c.get('imported')]
@@ -510,7 +510,7 @@ def poll_reviews_needed():
                 pull_requests_for_review.extend(pending_reviews)
 
         except requests.exceptions.RequestException as e:
-            print(t('polling_err', url=review_url, e=e), file=sys.stderr)
+            logging.info(t('polling_err', url=review_url, e=e))
             pass # Silently continue on network errors
 
         # Clear sent notification list if no PRs are pending review, so user gets notified again if they reappear

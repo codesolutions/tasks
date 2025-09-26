@@ -38,7 +38,7 @@ def load_pr_cache() -> Dict[str, Any]:
             pr_cache = {}
             # No PR cache file found, starting with empty cache
     except Exception as e:
-        print(f"Error loading PR cache: {e}")
+        logging.error(f"Error loading PR cache: {e}")
         pr_cache = {}
     
     return pr_cache
@@ -54,7 +54,7 @@ def save_pr_cache():
             with open(PR_CACHE_FILE, 'wb') as f:
                 pickle.dump(pr_cache, f)
     except Exception as e:
-        print(f"Error saving PR cache: {e}")
+        logging.error(f"Error saving PR cache: {e}")
 
 
 def get_pr_details_from_cache(pr_url: str) -> Optional[Dict[str, Any]]:

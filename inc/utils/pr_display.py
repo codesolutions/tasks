@@ -40,6 +40,7 @@ def render_pr_comments_section(stdscr, pr_details_v2, row, effective_main_width,
     # PR Comments header
     if show_header:
         header_text = "┌─────PR COMMENTS─── ─── ── ── ─ ─  ─   ─"
+        header_text = header_text.ljust(effective_main_width - 4)
         lines_used = _draw_wrapped_text(stdscr, header_text, row, start_col + 4,
             effective_main_width - start_col - 4, effective_main_width, content_height_obj,
             prefix="", subsequent_indent_offset=0,
@@ -63,6 +64,8 @@ def render_pr_comments_section(stdscr, pr_details_v2, row, effective_main_width,
             comment_header = f"{author} ({time_ago}):"
         except:
             comment_header = f"{author}:"
+
+        padded_comment_header = comment_header.ljust(effective_main_width - 6)
         
         # Display comment header first
         prefix_note = "| "
@@ -70,7 +73,7 @@ def render_pr_comments_section(stdscr, pr_details_v2, row, effective_main_width,
         max_text_width = effective_main_width - header_start_col - len(prefix_note)
         if max_text_width < 0: max_text_width = 0
         
-        lines_used = _draw_wrapped_text(stdscr, comment_header, row, header_start_col,
+        lines_used = _draw_wrapped_text(stdscr, padded_comment_header, row, header_start_col,
                                       max_text_width, effective_main_width, content_height_obj,
                                       prefix=prefix_note, subsequent_indent_offset=len(prefix_note),
                                       attr=curses.color_pair(COLOR_PAIR_PR_APPROVED))
@@ -81,7 +84,7 @@ def render_pr_comments_section(stdscr, pr_details_v2, row, effective_main_width,
         if text and content_height_obj[0] > 0:
             try:
                 # Wrap the comment text properly
-                wrapped_lines = wrap_comment(text, effective_main_width, indent=start_col + 6, subsequent_indent=start_col + 6)
+                wrapped_lines = wrap_comment(text, effective_main_width - 6, indent=start_col + 3, subsequent_indent=start_col + 3)
                 
                 for line_text, line_color in wrapped_lines[:min(len(wrapped_lines), content_height_obj[0])]:
                     if content_height_obj[0] <= 0: break
@@ -89,8 +92,8 @@ def render_pr_comments_section(stdscr, pr_details_v2, row, effective_main_width,
                         # Ensure the line fits within screen bounds and fill background
                         display_text = line_text[:effective_main_width] if len(line_text) > effective_main_width else line_text
                         # Pad the line to fill the entire width with background color
-                        padded_text = display_text.ljust(effective_main_width)
-                        stdscr.addstr(row, 0, padded_text, curses.color_pair(COLOR_PAIR_PR_APPROVED))
+                        padded_text = display_text.ljust(effective_main_width - 4)
+                        stdscr.addstr(row, header_start_col, padded_text, curses.color_pair(COLOR_PAIR_PR_APPROVED))
                         row += 1
                         content_height_obj[0] -= 1
                         lines_used_total += 1
@@ -109,8 +112,8 @@ def render_pr_comments_section(stdscr, pr_details_v2, row, effective_main_width,
         if content_height_obj[0] > 0:
             try:
                 # Create a separator line with full background
-                separator_line = " " * (start_col + 4) + "|" + " " * (effective_main_width - start_col - 5)
-                stdscr.addstr(row, 0, separator_line[:effective_main_width], curses.color_pair(COLOR_PAIR_PR_APPROVED))
+                separator_line = " " * (start_col) + "|" + " " * (effective_main_width - start_col - 5)
+                stdscr.addstr(row, start_col + 4, separator_line[:effective_main_width], curses.color_pair(COLOR_PAIR_PR_APPROVED))
                 row += 1
                 content_height_obj[0] -= 1
                 lines_used_total += 1
@@ -120,6 +123,7 @@ def render_pr_comments_section(stdscr, pr_details_v2, row, effective_main_width,
     # Footer
     if show_footer and content_height_obj[0] > 0:
         footer_text = "└──────────── ─── ── ── ─ ─  ─   ─"
+        footer_text = footer_text.ljust(effective_main_width - 4)
         lines_used = _draw_wrapped_text(stdscr, footer_text, row, start_col + 4,
             effective_main_width - start_col - 4, effective_main_width, content_height_obj,
             prefix="", subsequent_indent_offset=0,

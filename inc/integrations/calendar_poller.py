@@ -65,14 +65,14 @@ class CalendarPoller:
         try:
             self._fetch_meetings()
         except Exception as e:
-            print(f"Calendar initial polling error: {e}")
+            logging.info(f"Calendar initial polling error: {e}")
         
         # Then continue with regular polling interval
         while not self._stop_event.wait(CALENDAR_POLL_INTERVAL):
             try:
                 self._fetch_meetings()
             except Exception as e:
-                print(f"Calendar polling error: {e}")
+                logging.info(f"Calendar polling error: {e}")
     
     def _fetch_meetings(self):
         """Fetch meetings from the external calendar URL."""
@@ -110,10 +110,10 @@ class CalendarPoller:
                 self._meetings.extend(new_meetings)
                 
         except requests.exceptions.RequestException as e:
-            print(t('polling_err', url=self._calendar_url, e=e))
+            logging.info(t('polling_err', url=self._calendar_url, e=e))
             # Continue silently on network errors
         except Exception as e:
-            print(f"Calendar parsing error: {e}")
+            logging.info(f"Calendar parsing error: {e}")
 
 
 # Global instance

@@ -96,7 +96,7 @@ class WebMonitor:
                 for page in pages:
                     self._check_page(page)
             except Exception as e:
-                print(f"Web monitoring error: {e}")
+                logging.error(f"Web monitoring error: {e}")
     
     def _check_page(self, page_config: Dict[str, Any]):
         """
@@ -156,10 +156,10 @@ class WebMonitor:
                             self._data_save_callback()
                             
         except requests.exceptions.RequestException as e:
-            print(t('polling_err', url=url, e=e))
+            logging.error(t('polling_err', url=url, e=e))
             # Continue silently on network errors
         except Exception as e:
-            print(f"Web monitoring error for {url}: {e}")
+            logging.error(f"Web monitoring error for {url}: {e}")
     
     def update_data_notifications(self, data: Dict[str, Any]):
         """
