@@ -40,7 +40,7 @@ from inc.integrations.notification_service import send_desktop_notification
 from inc.utils.formatters import focus_window
 from inc.integrations.calendar_poller import calendar_poller
 from inc.integrations.web_monitor import web_monitor
-from inc.integrations.pr_monitor import poll_pull_requests, poll_reviews_needed
+from inc.integrations.pr_monitor import pr_queue_worker, queue_pr_for_polling, poll_reviews_needed
 from inc.integrations.event_poller import event_notification_poller
 from inc.views.base_view import show_notification, show_permanent_notification
 
@@ -241,8 +241,13 @@ def main(stdscr):
     )
     jira_thread.start()
     
-    # PR polling is now integrated into the main external services polling cycle
-    # No separate thread needed
+    # PR queue worker (asynchronous like Jira system)
+    pr_thread = threading.Thread(
+        target=pr_queue_worker, 
+        args=(stop_event, data_lock, app_data), 
+        daemon=True
+    )
+    pr_thread.start()
     
     notification_thread = threading.Thread(target=event_notification_poller, args=(data_lock, app_data), daemon=True)
     notification_thread.start()
@@ -369,9 +374,8 @@ def main(stdscr):
                 from inc.jira import poll_all_visible_subtasks
                 poll_all_visible_subtasks(app_data, jira_cache, jira_cache_lock)
                 
-                # Poll PR data for all visible subtasks with PR URLs
-                from inc.integrations.pr_monitor import poll_pr_data_sync
-                poll_pr_data_sync(app_data)
+                # Queue PR URLs for asynchronous polling (non-blocking like Jira)
+                queue_pr_for_polling(app_data)
                 
             last_ext_services_poll_time = current_time
             force_pr_poll = False  # Reset the force flag

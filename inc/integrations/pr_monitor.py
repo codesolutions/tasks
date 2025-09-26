@@ -16,6 +16,7 @@ import sys
 import requests
 import threading
 import logging
+import queue
 from datetime import datetime, date
 from typing import Dict, List, Optional, Any
 
@@ -26,6 +27,10 @@ from inc.core.data_manager import data_manager
 from inc.utils.formatters import format_subtask_for_title
 from inc.helpers import t
 from inc.utils.pr_formatters import overall_status_badge
+
+# PR request queue system (similar to Jira queue)
+pr_request_queue = queue.Queue()
+pr_in_flight = set()  # Track PR URLs currently being processed
 
 def convert_to_api_url(pr_url):
     """Convert a pull request web URL to its API URL."""
@@ -174,8 +179,215 @@ def check_for_unhandled_comments(activities, my_user_id):
                     unhandled_comments.append(comment)
     return unhandled_comments
 
+
+def queue_pr_for_polling(data_ref):
+    """
+    Queue all visible PR URLs for polling (non-blocking, similar to Jira system).
+    This function should be called periodically to refresh PR data.
+    """
+    if not data_ref:
+        return
+    
+    # Get all visible subtasks from current ticket
+    current_ticket = data_ref.get("current_ticket")
+    visible_pr_urls = set()
+    
+    if current_ticket:
+        subtasks = data_ref.get("sub_tasks", {}).get(current_ticket, {})
+        show_hidden = data_ref.get("show_hidden_tasks", False)
+        
+        for subtask_name, subtask_details in subtasks.items():
+            if isinstance(subtask_details, dict) and (show_hidden or subtask_details.get("status") != "hidden"):
+                pr_url = subtask_details.get("pr_url")
+                if pr_url:
+                    visible_pr_urls.add((current_ticket, subtask_name, pr_url))
+    
+    # Also check paused tasks for PR URLs
+    for paused_task in data_ref.get("paused_tasks", []):
+        paused_ticket = paused_task.get("ticket")
+        if paused_ticket:
+            paused_subtasks = paused_task.get("sub_tasks", {})
+            for subtask_name, subtask_details in paused_subtasks.items():
+                if isinstance(subtask_details, dict) and subtask_details.get("status") != "hidden":
+                    pr_url = subtask_details.get("pr_url")
+                    if pr_url:
+                        visible_pr_urls.add((paused_ticket, subtask_name, pr_url))
+    
+    # Queue PR URLs that need refreshing
+    current_time = time.time()
+    PR_CACHE_TIMEOUT = 60  # Cache timeout in seconds (same as Jira)
+    
+    for ticket_name, subtask_name, pr_url in visible_pr_urls:
+        # Check if PR was recently synced
+        subtask_details = data_ref.get("sub_tasks", {}).get(ticket_name, {}).get(subtask_name, {})
+        existing_pr_details = subtask_details.get('pr_details', {})
+        
+        should_fetch = True
+        if existing_pr_details.get('version') == 2:
+            last_synced = existing_pr_details.get('last_synced')
+            if last_synced:
+                try:
+                    last_sync_time = datetime.fromisoformat(last_synced.replace('Z', '+00:00'))
+                    now = datetime.now(last_sync_time.tzinfo)
+                    if (now - last_sync_time).total_seconds() < PR_CACHE_TIMEOUT:
+                        should_fetch = False
+                except:
+                    pass  # If parsing fails, continue with polling
+        
+        if should_fetch and pr_url not in pr_in_flight:
+            pr_in_flight.add(pr_url)
+            pr_request_queue.put((ticket_name, subtask_name, pr_url))
+            print(f"DEBUG: Queued PR {pr_url} for polling", file=sys.stderr)
+
+def pr_queue_worker(stop_event, data_lock, data_ref):
+    """
+    Worker thread that processes PR data requests from a queue (similar to Jira queue worker).
+    Runs in background and updates shared app data when PR data is fetched.
+    """
+    api_token = inc.config_manager.config.get("API_TOKEN")
+    my_user_id = inc.config_manager.config.get("USER_ID")
+    
+    if not api_token or api_token == "PASTE_YOUR_BEARER_TOKEN_HERE":
+        print("DEBUG: PR queue worker exiting - no valid API token", file=sys.stderr)
+        return
+    
+    while not stop_event.is_set():
+        try:
+            # Get PR request from queue with timeout
+            ticket_name, subtask_name, pr_url = pr_request_queue.get(timeout=1)
+            
+            print(f"DEBUG: Processing PR {pr_url} from queue", file=sys.stderr)
+            
+            api_url = convert_to_api_url(pr_url)
+            if not api_url:
+                print(f"DEBUG: Could not convert PR URL to API URL: {pr_url}", file=sys.stderr)
+                continue
+            
+            headers = {"Authorization": f"Bearer {api_token}", "Accept": "application/json;charset=UTF-8"}
+            
+            try:
+                # Fetch PR metadata and activities
+                pr_meta = fetch_pr_metadata(api_url, headers)
+                if not pr_meta:
+                    continue
+                
+                activities = fetch_pr_activities(api_url, headers)
+                if not activities:
+                    continue
+                
+                # Build new v2 pr_details structure
+                pr_details_v2 = build_pr_details_v2(pr_url, pr_meta, activities)
+                
+                # Update shared app data with data lock
+                with data_lock:
+                    # Check if the ticket/subtask still exists
+                    if (ticket_name not in data_ref.get("sub_tasks", {}) or 
+                        subtask_name not in data_ref.get("sub_tasks", {}).get(ticket_name, {})):
+                        print(f"DEBUG: Ticket/subtask no longer exists, skipping PR update", file=sys.stderr)
+                        continue
+                    
+                    subtask_details = data_ref["sub_tasks"][ticket_name][subtask_name]
+                    existing_pr_details = subtask_details.get('pr_details', {})
+                    old_pr_status = subtask_details.get("pr_status")
+                    
+                    # Preserve existing notification state and imported comments
+                    if existing_pr_details.get('version') == 2:
+                        # Preserve existing notification state
+                        existing_notifications = existing_pr_details.get('meta', {}).get('notifications', {})
+                        if existing_notifications:
+                            if 'meta' not in pr_details_v2:
+                                pr_details_v2['meta'] = {}
+                            if 'notifications' not in pr_details_v2['meta']:
+                                pr_details_v2['meta']['notifications'] = {}
+                            pr_details_v2['meta']['notifications'].update(existing_notifications)
+                            print(f"DEBUG: Preserved notification state for {subtask_name}: {existing_notifications}", file=sys.stderr)
+                        
+                        # Preserve imported comments
+                        imported_comments = [c for c in existing_pr_details.get('comments', []) if c.get('imported')]
+                        existing_ids = {c['id'] for c in pr_details_v2['comments']}
+                        for imported_comment in imported_comments:
+                            if imported_comment['id'] not in existing_ids:
+                                pr_details_v2['comments'].append(imported_comment)
+                        pr_details_v2['comments'].sort(key=lambda c: c.get('created', ''))
+                    
+                    # Store the updated pr_details
+                    subtask_details['pr_details'] = pr_details_v2
+                    
+                    # Store in cache for persistence
+                    from inc.integrations.pr_cache import store_pr_details_in_cache
+                    store_pr_details_in_cache(pr_url, pr_details_v2)
+                    
+                    # Calculate new status and handle notifications
+                    from inc.utils.pr_formatters import overall_status_badge
+                    overall_status, _ = overall_status_badge(pr_details_v2)
+                    
+                    state = pr_details_v2['meta']['state']
+                    new_status = None
+                    
+                    if state == 'MERGED':
+                        new_status = 'merged'
+                    elif 'approved' in overall_status:
+                        new_status = 'approved'
+                    else:
+                        # Check for unhandled comments
+                        unhandled_comments = check_for_unhandled_comments(activities, my_user_id)
+                        if unhandled_comments:
+                            new_status = 'attention_needed'
+                    
+                    # Update status if changed
+                    if new_status != old_pr_status:
+                        subtask_details['pr_status'] = new_status
+                        
+                        # Clean up old PR notes for status changes
+                        if new_status in ['merged', 'approved']:
+                            notes = subtask_details.get('notes', [])
+                            if new_status == 'merged':
+                                subtask_details['notes'] = [n for n in notes if not n.startswith("*PR* ") and not n.startswith(t('polling_note_approved'))]
+                            elif new_status == 'approved':
+                                notes_to_keep = [n for n in notes if not n.startswith("*PR* ")]
+                                if t('polling_note_approved') not in notes_to_keep:
+                                    notes_to_keep.append(t('polling_note_approved'))
+                                subtask_details['notes'] = notes_to_keep
+                    
+                    # Handle notifications
+                    from inc.integrations.pr_notifications import handle_pr_notification_changes
+                    try:
+                        from jira_tracker import permanent_notifications
+                        handle_pr_notification_changes(
+                            data_ref, ticket_name, subtask_name, pr_details_v2, old_pr_status, new_status, permanent_notifications
+                        )
+                    except ImportError:
+                        # Handle case where permanent_notifications might not be available
+                        handle_pr_notification_changes(
+                            data_ref, ticket_name, subtask_name, pr_details_v2, old_pr_status, new_status, None
+                        )
+                    
+                    # Save data
+                    data_manager.save_data(data_ref)
+                    
+                    print(f"DEBUG: Updated PR data for {ticket_name}/{subtask_name}", file=sys.stderr)
+                
+            except requests.exceptions.RequestException as e:
+                print(f"DEBUG: Network error fetching PR {pr_url}: {e}", file=sys.stderr)
+            
+            # Mark as completed
+            pr_request_queue.task_done()
+            
+        except queue.Empty:
+            # Expected when queue is empty, just continue
+            continue
+        except Exception as e:
+            print(f"DEBUG: Error in PR queue worker: {e}", file=sys.stderr)
+        finally:
+            # Always remove from in-flight set
+            if 'pr_url' in locals() and pr_url in pr_in_flight:
+                pr_in_flight.remove(pr_url)
+
+
 def poll_pull_requests(data_lock, data_ref):
-    """Poll pull request statuses and update data with enhanced v2 schema."""
+    """DEPRECATED: Poll pull request statuses and update data with enhanced v2 schema.
+    This function is no longer used - replaced by pr_queue_worker for non-blocking operation.
+    """
     api_token = inc.config_manager.config.get("API_TOKEN")
     my_user_id = inc.config_manager.config.get("USER_ID")
 
@@ -323,7 +535,9 @@ def poll_pull_requests(data_lock, data_ref):
 
 
 def poll_pr_data_sync(data_ref):
-    """Synchronous PR polling for integration with main polling cycle."""
+    """DEPRECATED: Synchronous PR polling for integration with main polling cycle.
+    This function is no longer used - replaced by queue_pr_for_polling for non-blocking operation.
+    """
     api_token = inc.config_manager.config.get("API_TOKEN")
     my_user_id = inc.config_manager.config.get("USER_ID")
     
