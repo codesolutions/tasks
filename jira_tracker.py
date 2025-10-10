@@ -44,6 +44,10 @@ from inc.integrations.pr_monitor import pr_queue_worker, queue_pr_for_polling, p
 from inc.integrations.event_poller import event_notification_poller
 from inc.views.base_view import show_notification, show_permanent_notification
 
+# Event system and notification handlers
+from inc.core.event_system import event_system, EventNames, trigger_ticket_selected, trigger_project_switched, trigger_view_changed
+from inc.core.notification_handlers import initialize_notification_handlers
+
 # JIRA integration
 from inc.jira import (
     load_jira_cache, jira_queue_worker, get_and_save_web_session
@@ -214,6 +218,9 @@ def main(stdscr):
     
     # Initialize command system
     initialize_commands()
+    
+    # Initialize notification handlers with shared data
+    initialize_notification_handlers(permanent_notifications, jira_cache, jira_cache_lock, app_data, data_lock)
     
     # Initialize view state
     command_buffer = ""
