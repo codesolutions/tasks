@@ -51,6 +51,20 @@ def display_dedicated_notes_view(stdscr, data, command_buffer, entity_for_notes,
             from inc.helpers import get_jira_ticket_from_url
             jira_ticket_id = get_jira_ticket_from_url(entity_name)
             cached_item = cache_copy.get(jira_ticket_id, {})
+            
+            # Mark Jira/Trello comments as read when opening this view
+            needs_save = False
+            if jira_cache and jira_cache_lock and jira_ticket_id:
+                with jira_cache_lock:
+                    if jira_ticket_id in jira_cache:
+                        if jira_cache[jira_ticket_id].get('new_jira_comment') or jira_cache[jira_ticket_id].get('new_trello_comment'):
+                            jira_cache[jira_ticket_id]['new_jira_comment'] = False
+                            jira_cache[jira_ticket_id]['new_trello_comment'] = False
+                            needs_save = True
+                # Save outside the lock to prevent nested locking
+                if needs_save:
+                    from inc.jira import save_jira_cache
+                    save_jira_cache(jira_cache, jira_cache_lock)
 
             if cached_item:
                 # Get task info
@@ -283,6 +297,52 @@ def display_dedicated_notes_view(stdscr, data, command_buffer, entity_for_notes,
             add_virtual_content("---", curses.color_pair(COLOR_PAIR_STANDOUT), prefix="| ")
         add_virtual_content("└──────────── ─── ── ── ─ ─  ─   ─", curses.color_pair(COLOR_PAIR_STANDOUT))
         add_virtual_content("")  # Empty line for spacing
+    
+    # Display PR comments in full detail if available
+    if subtask_details and entity_type == "subtask":
+        pr_details_v2 = subtask_details.get("pr_details", {})
+        
+        # If PR details are missing but PR URL exists, try to restore from cache
+        if (subtask_details.get("pr_url") and 
+            (not pr_details_v2 or pr_details_v2.get('version') != 2)):
+            from inc.integrations.pr_cache import get_pr_details_from_cache
+            cached_pr_details = get_pr_details_from_cache(subtask_details["pr_url"])
+            if cached_pr_details:
+                subtask_details["pr_details"] = cached_pr_details
+                pr_details_v2 = cached_pr_details
+        
+        if pr_details_v2 and pr_details_v2.get('version') == 2:
+            pr_comments = pr_details_v2.get('comments', [])
+            if pr_comments:
+                add_virtual_content("┌─────PR COMMENTS─── ─── ── ── ─ ─  ─   ─", curses.color_pair(COLOR_PAIR_PR_APPROVED))
+                
+                # Show all PR comments (not just recent ones like in main view)
+                for comment in pr_comments:
+                    author = comment.get('author', {}).get('displayName', 'Unknown')
+                    created = comment.get('created', '')
+                    text = comment.get('text', '')
+                    
+                    # Format timestamp
+                    try:
+                        from inc.utils.pr_formatters import format_time_ago
+                        time_ago = format_time_ago(created)
+                        header = f"{author} - {time_ago}"
+                    except:
+                        header = f"{author}"
+                    
+                    # Show header with author and timestamp
+                    add_virtual_content(header, curses.color_pair(COLOR_PAIR_PR_APPROVED) | curses.A_BOLD, prefix="| ")
+                    
+                    # Show full comment text (preserve newlines and wrap long lines)
+                    if text:
+                        for line in text.split('\n'):
+                            add_virtual_content(line, curses.color_pair(COLOR_PAIR_PR_APPROVED), prefix="| ")
+                    
+                    # Add separator between comments
+                    add_virtual_content("---", curses.color_pair(COLOR_PAIR_PR_APPROVED), prefix="| ")
+                
+                add_virtual_content("└──────────── ─── ── ── ─ ─  ─   ─", curses.color_pair(COLOR_PAIR_PR_APPROVED))
+                add_virtual_content("")  # Empty line for spacing
 
     # Display regular notes (with selection/deletion functionality preserved)
     if notes_list_to_display:
@@ -296,8 +356,13 @@ def display_dedicated_notes_view(stdscr, data, command_buffer, entity_for_notes,
             add_virtual_content(note_text, item_attr, prefix=prefix)
         add_virtual_content("└──────────── ─── ── ── ─ ─  ─   ─", curses.color_pair(COLOR_PAIR_DEFAULT))
 
-    # Show message if no content available
-    if not notes_list_to_display and not jira_comments and not trello_comments and not task_info_to_show and entity_for_notes:
+    # Show message if no content available  
+    has_pr_comments = False
+    if subtask_details and entity_type == "subtask":
+        pr_details_v2 = subtask_details.get("pr_details", {})
+        has_pr_comments = pr_details_v2 and pr_details_v2.get('version') == 2 and pr_details_v2.get('comments', [])
+    
+    if not notes_list_to_display and not jira_comments and not trello_comments and not task_info_to_show and not has_pr_comments and entity_for_notes:
         add_virtual_content("No notes, comments, or details available for this item.")
 
     # Now render the visible portion of virtual content based on scroll offset
@@ -309,7 +374,16 @@ def display_dedicated_notes_view(stdscr, data, command_buffer, entity_for_notes,
         if row + i >= height - reserved_rows_notes_footer: break
         try:
             # Text wrapping is now handled in add_virtual_content, so just display as-is
-            stdscr.addstr(row + i, 0, content_item['text'], content_item['attr'])
+            text_to_display = content_item['text']
+            attr = content_item['attr']
+            
+            # For PR comment lines, add background color by padding to full width
+            # Check if this is a PR comment line by checking if it uses the PR approved color
+            color_pair = attr & curses.A_COLOR
+            if color_pair == curses.color_pair(COLOR_PAIR_PR_APPROVED):
+                text_to_display = text_to_display.ljust(width - 1) if width > 1 else text_to_display
+            
+            stdscr.addstr(row + i, 0, text_to_display, attr)
         except curses.error:
             pass
 

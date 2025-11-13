@@ -14,10 +14,9 @@ def load_config():
     config_path = os.path.join(SCRIPT_DIR, "../config.json")
 
     default_config = {
-        "API_TOKEN": "PASTE_YOUR_BEARER_TOKEN_HERE",
-        "STASH_URL": "http://your-stash-instance.com:7990",
-        "STASH_REVIEW_URL": "http://your-stash-instance.com:7990/rest/api/latest/dashboard/pull-requests?state=OPEN&role=REVIEWER",
-        "USER_ID": 3006,
+        "API_TOKEN": "PASTE_YOUR_GITHUB_PAT_HERE",
+        "GITHUB_ORG": "owner",
+        "GITHUB_USERNAME": "your-github-username",
         "LANGUAGE": "fi",
         "NOTIFICATION_WINDOW_TITLE": "TODAYTASKS",
         "BROWSER_COMMAND": ["/usr/bin/google-chrome", "--profile-directory=Profile 1", "--new-window"],

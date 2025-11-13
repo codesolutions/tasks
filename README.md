@@ -1,42 +1,42 @@
-Here is the updated `README.md` file:
-
 # Terminal Project Tracker
 
-A terminal-based tool for tracking personal projects, their associated tickets (tasks), and their development lifecycle through pull request monitoring and notifications. It's designed for developers who spend a lot of time in the terminal and want a quick, keyboard-driven way to manage their current work.
+A modern, terminal-based project tracking application with a **modular command system** for managing projects, tickets, time tracking, and development workflows. Built for developers who live in the terminal and want efficient, keyboard-driven project management.
+
+> 📖 **Detailed Documentation**: See [COMMAND_SYSTEM_INTEGRATION.md](COMMAND_SYSTEM_INTEGRATION.md) for the complete technical overview of the new command system architecture.
 
 -----
 
-## ✨ Features
+## ✨ Key Features
 
-  * **Project & Ticket Management**: Organize your work into projects, each containing multiple tickets (tasks).
-  * **Real-time Timers**: Automatically tracks the time spent on the active project.
-  * **Pull Request Integration**: Associates pull request URLs with tickets and monitors their status in the background.
-  * **PR Status Highlighting**:
-      * 🔴 **Red**: PR needs your attention (unhandled comments).
-      * 🟢 **Green**: PR is approved and ready to merge.
-      * No color: PR is merged or has no issues.
-  * **Jira and Trello Integration**: Fetches details from Jira and Trello like status, summary, comments, and remote links.
-  * **Desktop Notifications**: Get native desktop notifications for:
-      * Upcoming meetings and events (built-in, no cron job needed).
-      * New unhandled comments on your pull requests.
-      * PR approvals and merges.
-  * **External Calendar Integration**: Polls an external calendar URL for meetings.
-  * **Note Taking**: Add notes to projects, tickets, or maintain a daily log.
-  * **Keyboard-Driven UI**: Designed for efficient use without leaving the keyboard.
-  * **Configurable & Translatable**: Settings are managed in a simple `config.json`, and all UI text can be translated via language files.
+### 🎯 **Modern Command Architecture**
+  * **24 Commands** across 6 functional categories
+  * **Modular & Extensible** - Easy to add new commands
+  * **Enhanced Validation** and error handling
+  * **Consistent Interface** across all operations
+  * **Backward Compatible** with existing workflows
+
+### 📋 **Core Functionality**
+  * **Project & Task Management**: Create, switch, and complete projects with nested subtasks
+  * **Time Tracking**: Built-in work sessions with start/pause/resume/log capabilities
+  * **Pull Request Integration**: Monitor PR status with real-time updates
+  * **Jira & Trello Integration**: Automatic ticket synchronization and status updates
+  * **Smart Focus System**: Focus on specific tasks for better productivity tracking
+  * **Advanced Notifications**: Desktop alerts for meetings, PR updates, and events
+  * **Multi-View Interface**: Main view, time log, daily notes, and dedicated note editing
+  * **External Integrations**: Calendar polling, web monitoring, and browser automation
 
 -----
 
 ## ⚙️ Setup & Configuration
 
-1.  **Dependencies**: Ensure you have Python 3 and the `requests` library installed.
+1.  **Dependencies**: Ensure you have Python 3 and the required libraries installed.
 
     ```bash
-    pip install requests selenium beautifulsoup4 lxml
+    pip install requests selenium beautifulsoup4 lxml webdriver-manager
     # OR if that is not working, add virtual env (preferred):
     python3 -m venv .venv
     source .venv/bin/activate
-    python3 -m pip install requests selenium beautifulsoup4 lxml
+    python3 -m pip install requests selenium beautifulsoup4 lxml webdriver-manager
     ```
 
     For desktop notifications on Linux, the following tools are required:
@@ -90,7 +90,7 @@ A terminal-based tool for tracking personal projects, their associated tickets (
       * `BROWSER_COMMAND`: A list containing the command and arguments to launch a web browser for meeting links.
       * `JIRA_URL`: The URL of your Jira instance.
       * `JIRA_SESSION_FILE`: The file to store your Jira session.
-      * `CHROME_DRIVER_PATH`: The path to your chromedriver executable.
+      * `CHROME_DRIVER_PATH`: (Optional) The path to your chromedriver executable. If not provided or invalid, webdriver-manager will automatically download the correct ChromeDriver version.
       * `TRELLO_URL`: The URL of your Trello instance.
       * `TRELLO_SESSION_FILE`: The file to store your Trello session.
       * `CALENDAR_CSV`: The URL to your external calendar in CSV format.
@@ -142,29 +142,64 @@ A terminal-based tool for tracking personal projects, their associated tickets (
 
 -----
 
-## ⌨️ Commands
+## ⌨️ Command Reference
 
-| Command | Description | Context |
-| :--- | :--- | :--- |
-| `<name>`/`<idx>` + `Enter`| Switch the active project. | Main View |
-| `n <project>` | Create a new project and make it active. | Main View |
-| `a <ticket>` | Add a new ticket to the current project. | Main View |
-| `pr <url>` | Add a Pull Request URL to the selected ticket. | Main View |
-| `note <text>` | Add a note to the selected ticket or active project. | Main View |
-| `Enter` (on ticket) | Toggle the 'done' status of the selected ticket. | Main View |
-| `d` (on ticket) | Hide the selected ticket from view. | Main View |
-| `x` | Mark the current project as complete. | Main View |
-| `p [day] HH:MM <link>` | Add a one-time or recurring meeting. | Main View |
-| `k [day] HH:MM <msg>` | Add a one-time or recurring event. | Main View |
-| `h` | Toggle the visibility of the command help footer. | All Views |
-| `q` | Quit the application. | All Views |
-| `t` | Toggle visibility of hidden tasks. | Main View |
-| `f` or `focus` | Set or clear focus on a subtask or ticket. | Main View |
-| `login` | Restart the application to log in to Jira and Trello. | Main View |
-| `Shift+TAB` / `ESC` | Enter/Exit the dedicated notes view. | All Views |
-| `<-` / `->` | Browse daily notes. | Main View |
-| `Up`/`Down` | Select a note. | Notes Views |
-| `d` | Delete the selected note. | Notes Views |
-| `<text>` + `Enter` | Add a new note. | Notes Views |
+> 💡 **Tip**: Type `h` in the application to see contextual help and available commands.
 
-*Note: `[day]` can be a two-letter abbreviation in English (`mo`, `tu`) or Finnish (`ma`, `ti`).*
+### 📋 **Project Management**
+| Command | Description |
+| :--- | :--- |
+| `n <project>` | Create a new project and make it active |
+| `x` | Mark the current project as complete |
+| `switch <name/number>` | Switch to a project by name or number |
+| `t` | Toggle visibility of hidden/completed tasks |
+| `ok [number]` | Dismiss notifications |
+
+### 🎯 **Task & Subtask Management**
+| Command | Description |
+| :--- | :--- |
+| `a <task>` | Add a new task/subtask to current project |
+| `d` | Hide the selected subtask |
+| `f` | Focus/unfocus on the selected subtask |
+| `focus <name>` | Focus on a specific task or subtask |
+| `pr <url>` | Add Pull Request URL to selected subtask |
+
+### ⏱️ **Time Tracking**
+| Command | Description |
+| :--- | :--- |
+| `startday` | Start a work day session |
+| `endday` | End the current work day session |
+| `pause` | Pause the current work session |
+| `resume` | Resume a paused work session |
+| `logtime <minutes> [date]` | Log time to focused subtask |
+| `logtime <subtask> <minutes> [date]` | Log time to specific subtask |
+| `c <comment>` | Add comment to latest time entry |
+| `timelog` | View time log |
+
+### 📝 **Notes & Events**
+| Command | Description |
+| :--- | :--- |
+| `note <text>` | Add note to selected task or active project |
+| `delete_note` | Delete selected note (in notes view) |
+| `p [day] HH:MM <link>` | Add meeting (one-time or recurring) |
+| `k [day] HH:MM <msg>` | Add interruption/event |
+
+### 🔧 **System & Navigation**
+| Command | Description |
+| :--- | :--- |
+| `h` | Toggle command help footer |
+| `q` | Quit the application |
+| `login` | Restart for Jira/Trello login |
+| `Shift+TAB` / `ESC` | Enter/Exit dedicated views |
+| `←` / `→` | Navigate daily notes |
+| `↑` / `↓` | Select items in lists |
+| `Enter` | Toggle task status or execute action |
+
+### 🏗️ **Architecture Notes**
+- **24 total commands** across 6 categories
+- **Modular system** - see `inc/commands/` for implementations  
+- **Extensible** - easy to add new commands
+- **Contextual help** - commands adapt to current view
+- **Enhanced validation** - better error messages and input checking
+
+*Note: `[day]` can be abbreviated in English (`mo`, `tu`) or Finnish (`ma`, `ti`)*

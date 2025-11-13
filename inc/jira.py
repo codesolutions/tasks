@@ -38,6 +38,7 @@ try:
     from selenium import webdriver
     from selenium.webdriver.chrome.service import Service
     from selenium.webdriver.chrome.options import Options
+    from webdriver_manager.chrome import ChromeDriverManager
     SELENIUM_AVAILABLE = True
 except ImportError:
     SELENIUM_AVAILABLE = False
@@ -47,12 +48,13 @@ except ImportError:
 def get_and_save_web_session(service_name, login_url, session_file, driver_path, permanent_notifications_ref):
     """
     Handles interactive browser login to capture session cookies for a given service.
+    Uses webdriver-manager to automatically handle ChromeDriver versions.
     
     Args:
         service_name (str): The name of the service (e.g., "Jira", "Trello").
         login_url (str): The URL to open for the user to log in.
         session_file (str): The path to save the session cookie file.
-        driver_path (str): Path to the chromedriver executable.
+        driver_path (str): Path to the chromedriver executable (optional, falls back to webdriver-manager).
         permanent_notifications_ref (list): A reference to the list of permanent notifications.
 
     Returns:
@@ -60,23 +62,43 @@ def get_and_save_web_session(service_name, login_url, session_file, driver_path,
     """
 
     print(f"\n--- {service_name} Login Process ---")
-
     print(f"\n--- {login_url} login url debug ---")
-    print(f"\n--- {driver_path} driver path ---")
-    time.sleep(5)
-
+    
     if not SELENIUM_AVAILABLE:
-        permanent_notifications_ref.append(f"ERROR: Selenium library not found for {service_name} login.")
+        permanent_notifications_ref.append(f"ERROR: Selenium and webdriver-manager libraries not found for {service_name} login.")
+        print(f"ERROR: Selenium and webdriver-manager libraries not found for {service_name} login.")
+        time.sleep(5)
         return False
 
-    if not login_url or not os.path.exists(driver_path):
-        permanent_notifications_ref.append(f"ERROR: URL or CHROME_DRIVER_PATH is invalid for {service_name} in config.json")
+    if not login_url:
+        permanent_notifications_ref.append(f"ERROR: Login URL is invalid for {service_name} in config.json")
+        print(f"ERROR: Login URL is invalid for {service_name} in config.json")
+        time.sleep(5)
         return False
 
     print(f"\n--- {service_name} Login Process ---")
     print("-> Starting browser...")
+    
+    # Try to get ChromeDriver using webdriver-manager first, fallback to configured path
+    driver_executable_path = None
     try:
-        service = Service(executable_path=driver_path)
+        print("-> Using webdriver-manager to get ChromeDriver...")
+        driver_executable_path = ChromeDriverManager().install()
+        print(f"-> ChromeDriver downloaded to: {driver_executable_path}")
+    except Exception as e:
+        print(f"-> webdriver-manager failed: {e}")
+        # Fallback to configured path if webdriver-manager fails
+        if driver_path and os.path.exists(driver_path):
+            print(f"-> Falling back to configured ChromeDriver: {driver_path}")
+            driver_executable_path = driver_path
+        else:
+            permanent_notifications_ref.append(f"ERROR: Cannot find ChromeDriver for {service_name}. webdriver-manager failed and no valid CHROME_DRIVER_PATH configured.")
+            print(f"ERROR: Cannot find ChromeDriver for {service_name}. webdriver-manager failed and no valid CHROME_DRIVER_PATH configured.")
+            time.sleep(5)
+            return False
+    
+    try:
+        service = Service(executable_path=driver_executable_path)
         driver = webdriver.Chrome(service=service, options=Options())
         driver.get(login_url)
 
@@ -241,10 +263,61 @@ def get_trello_id(data):
             trello_id = trello_link.split('/')[-1]
     return trello_id
 
+def poll_all_visible_subtasks(data, cache_ref, lock_ref):
+    """
+    Queue all visible Jira tickets for polling to refresh cache and detect new comments.
+    This function should be called periodically based on POLL_EXT_SERVICES_INTERVAL_MINUTES.
+    """
+    from inc.helpers import get_jira_ticket_from_url
+    
+    if not data:
+        return
+    
+    # Get all visible subtasks from current ticket
+    current_ticket = data.get("current_ticket")
+    visible_jira_tickets = set()
+    
+    if current_ticket:
+        subtasks = data.get("sub_tasks", {}).get(current_ticket, {})
+        show_hidden = data.get("show_hidden_tasks", False)
+        
+        for sub_name, sub_details in subtasks.items():
+            if isinstance(sub_details, dict) and (show_hidden or sub_details.get("status") != "hidden"):
+                jira_ticket_id = get_jira_ticket_from_url(sub_name)
+                if jira_ticket_id and jira_ticket_id != sub_name:  # Only if it's actually a Jira ticket
+                    visible_jira_tickets.add(jira_ticket_id)
+    
+    # Also check paused tasks for Jira tickets
+    for paused_task in data.get("paused_tasks", []):
+        paused_subtasks = paused_task.get("sub_tasks", {})
+        for sub_name, sub_details in paused_subtasks.items():
+            if isinstance(sub_details, dict) and sub_details.get("status") != "hidden":
+                jira_ticket_id = get_jira_ticket_from_url(sub_name)
+                if jira_ticket_id and jira_ticket_id != sub_name:
+                    visible_jira_tickets.add(jira_ticket_id)
+    
+    # Queue tickets that need refreshing
+    current_time = time.time()
+    JIRA_CACHE_TIMEOUT = 60  # Cache timeout in seconds
+    
+    with lock_ref:
+        cache_copy = cache_ref.copy()
+    
+    for jira_ticket_id in visible_jira_tickets:
+        cached_item = cache_copy.get(jira_ticket_id)
+        should_fetch = not cached_item or (current_time - cached_item.get('timestamp', 0)) > JIRA_CACHE_TIMEOUT
+        
+        if should_fetch and jira_ticket_id not in jira_in_flight:
+            jira_in_flight.add(jira_ticket_id)
+            jira_request_queue.put(jira_ticket_id)
+            logging.info(f"Automatically queued {jira_ticket_id} for polling")
+
 def jira_queue_worker(stop_event, permanent_notifications_ref, cache_ref, lock_ref):
     """
     Worker thread that processes Jira data requests from a queue, acting on a shared cache.
     """
+    from inc.integrations.notification_service import send_desktop_notification
+    
     while not stop_event.is_set():
         try:
             issue_id = jira_request_queue.get(timeout=1)
@@ -274,6 +347,15 @@ def jira_queue_worker(stop_event, permanent_notifications_ref, cache_ref, lock_r
                             notification_msg = f"New Jira comment in {issue_id}"
                             if notification_msg not in permanent_notifications_ref:
                                 permanent_notifications_ref.append(notification_msg)
+                            
+                            # Send desktop notification for new Jira comment
+                            try:
+                                send_desktop_notification(
+                                    "💬 New Jira Comment",
+                                    f"New comment detected in {issue_id}"
+                                )
+                            except Exception as e:
+                                logging.error(f"Failed to send desktop notification for Jira comment: {e}")
 
                     # Check for new Trello comments
                     trello_comment_count = 0
@@ -287,6 +369,15 @@ def jira_queue_worker(stop_event, permanent_notifications_ref, cache_ref, lock_r
                                 notification_msg = f"New Trello comment in {issue_id}"
                                 if notification_msg not in permanent_notifications_ref:
                                     permanent_notifications_ref.append(notification_msg)
+                                
+                                # Send desktop notification for new Trello comment
+                                try:
+                                    send_desktop_notification(
+                                        "💬 New Trello Comment", 
+                                        f"New comment detected in {issue_id}"
+                                    )
+                                except Exception as e:
+                                    logging.error(f"Failed to send desktop notification for Trello comment: {e}")
 
                     # Use the passed-in cache reference
                     cache_ref[issue_id] = {

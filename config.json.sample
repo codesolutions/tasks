@@ -1,9 +1,7 @@
 {
-    "API_TOKEN": "from_gitlab_server",
-    "STASH_URL": "http://URL_TO_STASH:7990",
-    "STASH_REVIEW_URL": "http://URL_TO_STASH:7990/rest/api/latest/dashboard/pull-requests?state=OPEN&role=REVIEWER",
-
-    "USER_ID": ENTER_YOUR_GITLAB_ID_FROM_JSON,
+    "API_TOKEN": "PASTE_YOUR_GITHUB_PAT_HERE",
+    "GITHUB_ORG": "owner",
+    "GITHUB_USERNAME": "your-github-username",
     "LANGUAGE": "en",
     "NOTIFICATION_WINDOW_TITLE": "TODAYTASKS",
     "BROWSER_COMMAND": [
@@ -13,7 +11,7 @@
     ]
     "JIRA_URL": "https://your_org_here.atlassian.net",
     "JIRA_SESSION_FILE": "jira_session.pkl",
-    "CHROME_DRIVER_PATH": "chromedriver-linux64/chromedriver",
+    "CHROME_DRIVER_PATH": "",
     "TRELLO_URL": "https://trello.com",
     "TRELLO_SESSION_FILE": "trello_session.pkl",
     "CALENDAR_CSV": "https://docs.google.com/spreadsheets/d/e/YOUR_EXPORTED_CALENDAR_CSV_HERE/pub?gid=0&single=true&output=csv",
@@ -39,5 +37,6 @@
         "ENABLED": true,
         "HOURLY_CHECKIN_ENABLED": true,
         "CHECKIN_INTERVAL_MINUTES": 60
-    }
+    },
+    "POLL_EXT_SERVICES_INTERVAL_MINUTES": 2
 }

@@ -2,10 +2,15 @@ import curses
 from datetime import datetime, timedelta
 from inc.helpers import t
 from inc.views.base_view import format_timedelta_minutes
+from inc.utils.constants import (
+    COLOR_PAIR_STANDOUT, COLOR_PAIR_HELP_OVERLAY
+)
 
 def display_hourly_checkin_view(stdscr, data, selected_task_index=-1):
     height, width = stdscr.getmaxyx()
     stdscr.clear()
+  
+    stdscr.bkgd(' ', curses.color_pair(COLOR_PAIR_HELP_OVERLAY))
     
     pending_checkin = data.get("pending_checkin", {})
     if not pending_checkin:
@@ -15,17 +20,42 @@ def display_hourly_checkin_view(stdscr, data, selected_task_index=-1):
         stdscr.refresh()
         return
     
-    duration_seconds = pending_checkin.get("duration_seconds", 3600)
+    timer_start_ts = pending_checkin.get("timer_start_ts")
     suggested_subtask = pending_checkin.get("suggested_subtask")
     
     now = datetime.now()
-    duration_str = format_timedelta_minutes(timedelta(seconds=duration_seconds))
+    now_ts = now.timestamp()
+    
+    # Calculate actual time worked since timer started
+    if timer_start_ts:
+        actual_work_seconds = int(now_ts - timer_start_ts)
+    else:
+        # Fallback - shouldn't happen with new system
+        actual_work_seconds = pending_checkin.get("duration_seconds", 3600)
+    
+    duration_str = format_timedelta_minutes(timedelta(seconds=actual_work_seconds))
     
     row = 1
-    stdscr.addstr(row, 2, f"Time for your hourly check-in! ({now.strftime('%H:%M')})")
+    # Show current time dynamically - this gets updated on each render
+    current_time_str = datetime.now().strftime('%H:%M:%S')
+    stdscr.addstr(row, 2, f"⏰ Time for your check-in! (Current time: {current_time_str})")
     row += 1
-    stdscr.addstr(row, 2, f"Please account for the last {duration_str}.")
-    row += 2
+    
+    # Calculate and show the actual work period being tracked
+    if timer_start_ts:
+        try:
+            start_time = datetime.fromtimestamp(timer_start_ts)
+            start_time_str = start_time.strftime('%H:%M')
+            
+            stdscr.addstr(row, 2, f"📊 Work period: {start_time_str} → {current_time_str} ({duration_str})")
+            row += 1
+        except (ValueError, AttributeError):
+            stdscr.addstr(row, 2, f"📊 Please account for approximately {duration_str} of work.")
+            row += 1
+    else:
+        stdscr.addstr(row, 2, f"📊 Please account for approximately {duration_str} of work.")
+        row += 1
+    row += 1
 
     if suggested_subtask:
         stdscr.addstr(row, 2, "Were you working on your focused subtask?")
@@ -110,7 +140,7 @@ def display_hourly_checkin_view(stdscr, data, selected_task_index=-1):
         
         row += 1
     
-    stdscr.addstr(height - 1, 2, "Press ESC to cancel this check-in.")
+    stdscr.addstr(height - 1, 2, "Press ESC or ENTER to cancel this check-in.")
     stdscr.refresh()
     
     return available_tasks if selected_task_index >= 0 else []

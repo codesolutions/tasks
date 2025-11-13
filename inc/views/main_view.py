@@ -28,7 +28,7 @@ from inc.views.base_view import show_permanent_notification
 (COLOR_PAIR_DEFAULT, COLOR_PAIR_REVERSE, COLOR_PAIR_GREY, COLOR_PAIR_PAUSED,
  COLOR_PAIR_SELECTED, COLOR_PAIR_TASK_ALL_SUBTASKS_DONE, COLOR_PAIR_TASK_ALL_SUBTASKS_HIDDEN, COLOR_PAIR_URGENT_BOX,
  COLOR_PAIR_PR_UNHANDLED, COLOR_PAIR_PR_APPROVED, COLOR_PAIR_FOCUSED,
- COLOR_PAIR_PERMANENT_NOTIFICATION, COLOR_PAIR_STANDOUT, COLOR_PAIR_NEW_COMMENT) = range(1, 15)
+ COLOR_PAIR_PERMANENT_NOTIFICATION, COLOR_PAIR_STANDOUT, COLOR_PAIR_NEW_COMMENT, COLOR_PAIR_HELP_OVERLAY) = range(1, 16)
 
 VIEW_MAIN = "main"
 VIEW_DEDICATED_NOTES = "dedicated_notes"
@@ -57,6 +57,9 @@ def display_main_view(stdscr, data, command_buffer="", full_redraw=False, select
     try:
         height, width = stdscr.getmaxyx()
     except curses.error: return False
+
+    # stdscr.bkgd(' ', curses.color_pair(COLOR_PAIR_HELP_OVERLAY))
+
     now_time_str = datetime.now().strftime("%H:%M:%S")
     now_dt = datetime.now()
     today_start = now_dt.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -117,13 +120,10 @@ def display_main_view(stdscr, data, command_buffer="", full_redraw=False, select
     command_line_text = "> " + display_buffer
     cursor_x = len(command_line_text)
 
+    from inc.commands.command_registry import get_command_help
+    
     help_lines_definitions = {
-        "full": [
-            t('help_header'), t('help_switch_task'), t('help_new_task'), t('help_add_subtask'),
-            t('help_hide_subtask'), t('help_add_pr'), t('help_done_subtask'), t('help_done_task'),
-            t('help_add_meeting'), t('help_add_event'), t('help_add_note'), t('help_set_focus'), t('help_set_subtask_focus'), t('help_toggle_help'),
-            t('help_daily_notes'), t('help_notes_view'), t('help_quit')
-        ],
+        "full": get_command_help().split('\n'),
         "hidden": [t('help_hidden_prompt')]
     }
     current_help_lines_list = help_lines_definitions["full"] if show_help_footer else help_lines_definitions["hidden"]
@@ -170,12 +170,13 @@ def display_main_view(stdscr, data, command_buffer="", full_redraw=False, select
 
 
                         subtasks_for_ticket0 = data.get("sub_tasks", {}).get(ticket_name_line0, {})
+                        from inc.integrations.pr_notifications import update_permanent_notifications
+                        update_permanent_notifications(permanent_notifications, ticket_name_line0, subtasks_for_ticket0)
+                        
                         if any(st.get("pr_status") == 'attention_needed' for st in subtasks_for_ticket0.values() if isinstance(st, dict)):
                             attr_line0 = curses.color_pair(COLOR_PAIR_PR_UNHANDLED)
-                            if f"{ticket_name_line0}: PR attention needed!" not in permanent_notifications: permanent_notifications.append(f"{ticket_name_line0}: PR attention needed!")
                         elif any(st.get("pr_status") == 'approved' for st in subtasks_for_ticket0.values() if isinstance(st, dict)):
                             attr_line0 = curses.color_pair(COLOR_PAIR_PR_APPROVED)
-                            if f"{ticket_name_line0}: PR approved. Please merge!" not in permanent_notifications: permanent_notifications.append(f"{ticket_name_line0}: PR approved. Please merge!")
                         elif subtasks_for_ticket0 and all(st_details.get("status") == "hidden" for st_details in subtasks_for_ticket0.values() if isinstance(st_details, dict)):
                             attr_line0 = curses.color_pair(COLOR_PAIR_TASK_ALL_SUBTASKS_HIDDEN)
                         elif (subtasks_for_ticket0 and 
@@ -230,13 +231,14 @@ def display_main_view(stdscr, data, command_buffer="", full_redraw=False, select
                 subtasks_for_this_panel_ticket = data.get("sub_tasks", {}).get(ticket_name_in_panel, {})
                 cached_item = cache_copy.get(inc.helpers.get_jira_ticket_from_url(ticket_name_in_panel))
 
-                # Check for PR status for background color
+                # Check for PR status for background color and update notifications
+                from inc.integrations.pr_notifications import update_permanent_notifications
+                update_permanent_notifications(permanent_notifications, ticket_name_in_panel, subtasks_for_this_panel_ticket)
+                
                 if any(st.get("pr_status") == 'attention_needed' for st in subtasks_for_this_panel_ticket.values() if isinstance(st, dict)):
                     item_attr = curses.color_pair(COLOR_PAIR_PR_UNHANDLED)
-                    if f"{ticket_name_in_panel}: PR attention needed!" not in permanent_notifications: permanent_notifications.append(f"{ticket_name_in_panel}: PR attention needed!")
                 elif any(st.get("pr_status") == 'approved' for st in subtasks_for_this_panel_ticket.values() if isinstance(st, dict)):
                     item_attr = curses.color_pair(COLOR_PAIR_PR_APPROVED)
-                    if f"{ticket_name_in_panel}: PR approved. Please merge!" not in permanent_notifications: permanent_notifications.append(f"{ticket_name_in_panel}: PR approved. Please merge!")
                 elif cached_item and (cached_item.get('new_jira_comment') or cached_item.get('new_trello_comment')):
                     item_attr = curses.color_pair(COLOR_PAIR_NEW_COMMENT)
                 elif subtasks_for_this_panel_ticket and all(st_details.get("status") == "hidden" for st_details in subtasks_for_this_panel_ticket.values() if isinstance(st_details, dict)):
@@ -333,9 +335,6 @@ def display_main_view(stdscr, data, command_buffer="", full_redraw=False, select
     current_ticket = data.get("current_ticket")
 
     if current_ticket:
-        paused_count = len(data.get('paused_tasks', []))
-        paused_info = f" {t('ui_paused_tasks', count=paused_count)}" if paused_count > 0 else ""
-        
         # Add work session status and daily total
         work_session = data.get("work_session", {})
         today_str = date.today().isoformat()
@@ -352,7 +351,7 @@ def display_main_view(stdscr, data, command_buffer="", full_redraw=False, select
             if current_timer_start:
                 elapsed = datetime.now().timestamp() - current_timer_start
                 elapsed_str = format_timedelta_minutes(timedelta(seconds=int(elapsed)))
-                work_status = f" [⏱️ {elapsed_str}]"
+                work_status = f" [⏱️  {elapsed_str}]"
             else:
                 work_status = " [⏱️ active]"
         
@@ -360,10 +359,10 @@ def display_main_view(stdscr, data, command_buffer="", full_redraw=False, select
         time_info = f" (today: {today_total_str}{work_status})"
         
         if content_height_obj[0] > 0 and effective_main_width > 0:
-            available_width_for_ticket_name = effective_main_width - len(base_text) - len(paused_info) - len(time_info) - 1
+            available_width_for_ticket_name = effective_main_width - len(base_text) - len(time_info) - 1
             if available_width_for_ticket_name < 0: available_width_for_ticket_name = 0
             ticket_display_name = current_ticket[:available_width_for_ticket_name]
-            full_ticket_line = f"{base_text}{ticket_display_name}{paused_info}{time_info}"
+            full_ticket_line = f"{base_text}{ticket_display_name}{time_info}"
             stdscr.addstr(row, 0, full_ticket_line[:effective_main_width])
             row += 1; content_height_obj[0] -= 1
 
@@ -425,12 +424,24 @@ def display_main_view(stdscr, data, command_buffer="", full_redraw=False, select
                         display_text += f" [{status}]"
 
                 pr_status = sub_task_details_obj.get("pr_status")
-                if pr_status == 'attention_needed':
+                
+                # Check PR status from v2 schema first if available
+                pr_details_v2 = sub_task_details_obj.get("pr_details", {})
+                if pr_details_v2 and pr_details_v2.get('version') == 2:
+                    pr_meta = pr_details_v2.get('meta', {})
+                    if pr_meta.get('state') == 'MERGED':
+                        item_attr = curses.color_pair(COLOR_PAIR_TASK_ALL_SUBTASKS_DONE)  # Green for merged
+                    elif pr_status == 'attention_needed':
+                        item_attr = curses.color_pair(COLOR_PAIR_PR_UNHANDLED)  # Red for attention needed
+                    elif pr_status == 'approved':
+                        item_attr = curses.color_pair(COLOR_PAIR_PR_APPROVED)  # Green for approved
+                    # Fall through to other conditions if no PR status
+                elif pr_status == 'attention_needed':
                     item_attr = curses.color_pair(COLOR_PAIR_PR_UNHANDLED)
-
                 elif pr_status == 'approved':
                     item_attr = curses.color_pair(COLOR_PAIR_PR_APPROVED)
-
+                elif pr_status == 'merged':
+                    item_attr = curses.color_pair(COLOR_PAIR_TASK_ALL_SUBTASKS_DONE)
                 elif cached_item and (cached_item.get('new_jira_comment') or cached_item.get('new_trello_comment')):
                     item_attr = curses.color_pair(COLOR_PAIR_NEW_COMMENT)
 
@@ -469,18 +480,50 @@ def display_main_view(stdscr, data, command_buffer="", full_redraw=False, select
             sub_task_with_desc = sel_sub_name
             notes_to_show_preview = sel_sub_details.get("notes", []).copy()
 
-            if sel_sub_details.get("pr_url"):
+            # Handle PR information with new v2 schema
+            pr_details_v2 = sel_sub_details.get("pr_details", {})
+            
+            # If PR details are missing but PR URL exists, try to restore from cache
+            if (sel_sub_details.get("pr_url") and 
+                (not pr_details_v2 or pr_details_v2.get('version') != 2)):
+                from inc.integrations.pr_cache import get_pr_details_from_cache
+                cached_pr_details = get_pr_details_from_cache(sel_sub_details["pr_url"])
+                if cached_pr_details:
+                    sel_sub_details["pr_details"] = cached_pr_details
+                    pr_details_v2 = cached_pr_details
+            
+            if pr_details_v2 and pr_details_v2.get('version') == 2:
+                pr_meta = pr_details_v2.get('meta', {})
+                task_info_to_show.insert(0, f"PR: {pr_meta.get('url', sel_sub_details.get('pr_url', 'Unknown URL'))}")
+                
+                # Use new formatter to get overall status
+                from inc.utils.pr_formatters import overall_status_badge
+                status_text, _ = overall_status_badge(pr_details_v2)
+                
+                # Format reviewers with new schema
+                reviewers = pr_details_v2.get('reviewers', [])
+                if reviewers:
+                    from inc.utils.pr_formatters import status_badge
+                    reviewer_badges = []
+                    for reviewer in reviewers[:4]:  # Limit to 4 reviewers for space
+                        badge, _ = status_badge(reviewer.get('status', 'UNAPPROVED'))
+                        reviewer_badges.append(f"{badge} {reviewer.get('displayName', 'Unknown')}")
+                    
+                    approvers_str = f"PR {status_text}: {', '.join(reviewer_badges)}"
+                    if len(reviewers) > 4:
+                        approvers_str += f" (+{len(reviewers) - 4} more)"
+                    task_info_to_show.insert(1, approvers_str)
+                else:
+                    task_info_to_show.insert(1, f"PR {status_text}: No reviewers")
+            elif sel_sub_details.get("pr_url"):  # Fallback for old format
                 task_info_to_show.insert(0, f"PR: {sel_sub_details.get('pr_url')}")
-
-            pr_details = sel_sub_details.get("pr_details", {})
-            if pr_details:
-                # Draw overall status
-                status_text = pr_details.get('status_text', 'waiting')
-                #task_info_to_show.insert(1, f"PR Status: {status_text}")
-
-                # Draw approvers with emojis
-                approvers_str = "PR " + status_text + ": " + ", ".join(pr_details.get('approvers_formatted', []))
-                task_info_to_show.insert(1, approvers_str)
+                # Try to use old pr_details if available
+                old_pr_details = sel_sub_details.get("pr_details", {})
+                if old_pr_details and old_pr_details.get('status_text'):
+                    status_text = old_pr_details.get('status_text', 'waiting')
+                    approvers_formatted = old_pr_details.get('approvers_formatted', [])
+                    approvers_str = "PR " + status_text + ": " + ", ".join(approvers_formatted)
+                    task_info_to_show.insert(1, approvers_str)
 
 
             cached_item = cache_copy.get(sel_sub_name, {})
@@ -562,20 +605,9 @@ def display_main_view(stdscr, data, command_buffer="", full_redraw=False, select
                                             attr=curses.color_pair(COLOR_PAIR_PAUSED))
             row += lines_used_note
 
-        notes_with_unhandled = [n for n in notes_to_show_preview if n.startswith("*PR* ")]
-        for note_idx, note in enumerate(notes_with_unhandled[:10]):
-            if content_height_obj[0] <= 0 : break
-            if effective_main_width <= 4: break
-
-            prefix_note = f"| "
-            start_col_note = 4
-            max_text_width_note = effective_main_width - start_col_note - len(prefix_note)
-            if max_text_width_note < 0 : max_text_width_note = 0
-            lines_used_note = _draw_wrapped_text(stdscr, note, row, start_col_note,
-                                            max_text_width_note, effective_main_width, content_height_obj,
-                                            prefix=prefix_note, subsequent_indent_offset=len(prefix_note),
-                                            attr=curses.color_pair(COLOR_PAIR_PAUSED))
-            row += lines_used_note
+        # PR comments are now handled by the new schema and displayed separately
+        # Only show regular notes (PR comments were migrated out of notes)
+        regular_notes = [n for n in notes_to_show_preview if not n.startswith("*PR* ")]
 
 
         if len(task_info_to_show):
@@ -687,9 +719,20 @@ def display_main_view(stdscr, data, command_buffer="", full_redraw=False, select
             row += lines_used_note
 
 
-        notes_without_unhandled = [n for n in notes_to_show_preview if not n.startswith("*PR* ")]
-
-        for note_idx, note in enumerate(notes_without_unhandled[:10]):
+        # Display PR comments if available with v2 schema
+        if (selected_subtask_idx != -1 and 0 <= selected_subtask_idx < len(subtask_list_to_use)):
+            sel_sub_name, sel_sub_details = subtask_list_to_use[selected_subtask_idx]
+            pr_details_v2 = sel_sub_details.get("pr_details", {})
+            if pr_details_v2 and pr_details_v2.get('version') == 2:
+                from inc.utils.pr_display import render_pr_comments_section
+                lines_used = render_pr_comments_section(
+                    stdscr, pr_details_v2, row, effective_main_width, content_height_obj,
+                    max_comments=5, start_col=0, show_header=True, show_footer=True
+                )
+                row += lines_used
+        
+        # Display regular notes (without PR comments)
+        for note_idx, note in enumerate(regular_notes[:10]):
             if content_height_obj[0] <= 0 : break
             if effective_main_width <= 4: break
             prefix_note = f"- "
@@ -701,7 +744,7 @@ def display_main_view(stdscr, data, command_buffer="", full_redraw=False, select
                                             prefix=prefix_note, subsequent_indent_offset=len(prefix_note))
             row += lines_used_note
 
-        if len(notes_without_unhandled) > 10 and content_height_obj[0] > 0 and effective_main_width > 7:
+        if len(regular_notes) > 10 and content_height_obj[0] > 0 and effective_main_width > 7:
             stdscr.addstr(row, 4, t('ui_more_notes')[:effective_main_width-4])
             row+=1; content_height_obj[0]-=1
 
@@ -838,20 +881,34 @@ def display_main_view(stdscr, data, command_buffer="", full_redraw=False, select
         if interruptions_shown_count == 0 and content_height_obj[0] > 0:
              stdscr.addstr(row, 2, t('ui_no_other_events')[:effective_main_width-2]); row += 1
 
-    help_section_start_y = height - 1 - 1 - num_actual_help_lines
-    max_desc_width_footer = effective_main_width
-    if help_section_start_y >= row and effective_main_width > 0 :
-        stdscr.attron(curses.color_pair(COLOR_PAIR_DEFAULT))
-        for i, line_text in enumerate(current_help_lines_list):
-            current_draw_y = help_section_start_y + i
-            if current_draw_y < height - 2:
-                indent = 2 if show_help_footer and i > 0 and not line_text.strip() == t('help_header') else 0
-                if line_text.strip() == t('help_header'): indent = 0
-                try:
-                    stdscr.addstr(current_draw_y, indent, line_text[:max(0, max_desc_width_footer - indent)])
-                except curses.error: pass
-            else: break
-        stdscr.attroff(curses.color_pair(COLOR_PAIR_DEFAULT))
+    # Draw help overlay - always show when requested, overlaying the content
+    if show_help_footer and effective_main_width > 0:
+        # Calculate help overlay dimensions
+        help_start_y = max(1, height - num_actual_help_lines - 3)  # Leave space for command line
+        help_width = min(effective_main_width, width - 4)  # Leave some margins
+        help_height = min(num_actual_help_lines, height - help_start_y - 2)
+        
+        # Draw help overlay with black background
+        try:
+            for i in range(help_height):
+                overlay_y = help_start_y + i
+                if overlay_y < height - 2 and i < len(current_help_lines_list):
+                    line_text = current_help_lines_list[i]
+                    # Clear the line with black background
+                    padding = " " * help_width
+                    stdscr.addstr(overlay_y, 2, padding, curses.color_pair(COLOR_PAIR_HELP_OVERLAY))
+                    
+                    # Add the help text with appropriate indentation
+                    indent = 2 if i > 0 and line_text.strip() != t('help_header') else 0
+                    if line_text.strip() == t('help_header'): 
+                        indent = 0
+                    
+                    display_text = line_text[:max(0, help_width - indent - 2)]
+                    if display_text.strip():  # Only draw non-empty lines
+                        stdscr.addstr(overlay_y, 2 + indent, display_text, 
+                                    curses.color_pair(COLOR_PAIR_HELP_OVERLAY) | curses.A_BOLD)
+        except curses.error:
+            pass  # Ignore drawing errors
 
     try:
         stdscr.addstr(height - 1, 0, " " * (width-1 if width > 0 else 0) )
@@ -862,7 +919,7 @@ def display_main_view(stdscr, data, command_buffer="", full_redraw=False, select
 
     try:
         stdscr.attroff(curses.A_BOLD)
-        for i in range(1, 11):
+        for i in range(1, 17):  # Updated to include new COLOR_PAIR_HELP_OVERLAY
             stdscr.attroff(curses.color_pair(i))
     except curses.error: pass
     stdscr.refresh()
