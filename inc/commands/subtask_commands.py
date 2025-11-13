@@ -513,6 +513,14 @@ class AddPRCommand(BaseCommand):
             )
         
         pr_url = " ".join(args[1:])
+        
+        # Simple validation for GitHub URL
+        if not pr_url.startswith("https://github.com/"):
+            return CommandResult(
+                success=False,
+                message="Error: PR URL must be a valid GitHub URL (https://github.com/...)"
+            )
+        
         subtask_name, _ = context.current_ticket_subtask_list[context.selected_subtask_idx]
         
         # Add PR URL to subtask
@@ -522,13 +530,14 @@ class AddPRCommand(BaseCommand):
             data["sub_tasks"][current_ticket][subtask_name]["pr_url"] = pr_url
             data["sub_tasks"][current_ticket][subtask_name]["pr_status"] = None  # Reset status
             
-            # Trigger immediate PR polling for this subtask
+            # **FIX:** Trigger asynchronous PR polling for this subtask
             try:
-                from inc.integrations.pr_monitor import poll_pr_data_sync
-                poll_pr_data_sync(data)
+                from inc.integrations.pr_monitor import queue_pr_for_polling
+                # Queue all visible PRs. This will include the one just added.
+                queue_pr_for_polling(data)
             except Exception as e:
                 # Don't fail the command if PR polling fails
-                logging.info(f"Warning: PR polling failed after adding PR URL: {e}")
+                logging.warning(f"Warning: Failed to queue PR for polling after adding URL: {e}")
             
             return CommandResult(
                 success=True,
