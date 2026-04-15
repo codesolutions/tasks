@@ -25,7 +25,7 @@ Pull request data is stored under each subtask in the `pr_details` object, repla
             },
             "created": "2024-01-15T10:30:00Z",
             "updated": "2024-01-17T14:22:00Z", 
-            "url": "https://stash.company.com/projects/PROJ/repos/repo/pull-requests/1573",
+            "url": "https://bitbucket.org/workspace/repo/pull-requests/1573",
             "state": "OPEN|MERGED|DECLINED",
             "merge_status": "CAN_MERGE|CANNOT_MERGE|UNKNOWN"
           },
@@ -62,7 +62,7 @@ Pull request data is stored under each subtask in the `pr_details` object, repla
           "last_synced": "2024-01-17T15:00:00Z",
           "version": 2
         },
-        "pr_url": "https://stash.company.com/projects/PROJ/repos/repo/pull-requests/1573",
+        "pr_url": "https://bitbucket.org/workspace/repo/pull-requests/1573",
         "pr_status": "approved|attention_needed|merged|waiting"
       }
     }

@@ -239,7 +239,7 @@ def display_main_view(stdscr, data, command_buffer="", full_redraw=False, select
                     item_attr = curses.color_pair(COLOR_PAIR_PR_UNHANDLED)
                 elif any(st.get("pr_status") == 'approved' for st in subtasks_for_this_panel_ticket.values() if isinstance(st, dict)):
                     item_attr = curses.color_pair(COLOR_PAIR_PR_APPROVED)
-                elif cached_item and (cached_item.get('new_jira_comment') or cached_item.get('new_trello_comment')):
+                elif cached_item and cached_item.get('new_jira_comment'):
                     item_attr = curses.color_pair(COLOR_PAIR_NEW_COMMENT)
                 elif subtasks_for_this_panel_ticket and all(st_details.get("status") == "hidden" for st_details in subtasks_for_this_panel_ticket.values() if isinstance(st_details, dict)):
                     item_attr = curses.color_pair(COLOR_PAIR_TASK_ALL_SUBTASKS_HIDDEN)
@@ -442,7 +442,7 @@ def display_main_view(stdscr, data, command_buffer="", full_redraw=False, select
                     item_attr = curses.color_pair(COLOR_PAIR_PR_APPROVED)
                 elif pr_status == 'merged':
                     item_attr = curses.color_pair(COLOR_PAIR_TASK_ALL_SUBTASKS_DONE)
-                elif cached_item and (cached_item.get('new_jira_comment') or cached_item.get('new_trello_comment')):
+                elif cached_item and cached_item.get('new_jira_comment'):
                     item_attr = curses.color_pair(COLOR_PAIR_NEW_COMMENT)
 
                 if i == selected_subtask_idx:
@@ -471,8 +471,6 @@ def display_main_view(stdscr, data, command_buffer="", full_redraw=False, select
         task_info_to_show = []
         notes_title_preview = ""
         jira_comments = []
-        trello_data = []
-        trello_link = ""
 
         if selected_subtask_idx != -1 and 0 <= selected_subtask_idx < len(subtask_list_to_use):
             sel_sub_name, sel_sub_details = subtask_list_to_use[selected_subtask_idx]
@@ -549,23 +547,11 @@ def display_main_view(stdscr, data, command_buffer="", full_redraw=False, select
                 vf_link = next((l.get("object",{}).get("url") for l in cached_item.get('remotelinks',[]) if l.get("globalId") == "VF - Log Hours"), "N/A")
                 task_info_to_show.insert(0, f"VF: {vf_link}")
 
-                jira_description = cached_item.get('data', {}).get('fields', {}).get('description', "")
-                
-                if (jira_description and isinstance(jira_description, str)):
-                    # API v2 way, no objects
-                    pattern = r"(https://trello\.com/c/[^]]+)"
-                    match = re.search(pattern, jira_description)
-                    if match:
-                        trello_link = match.group(0)
-
-                        task_info_to_show.insert(0, f"Trello: {trello_link}")
-
                 jira_link = f"{inc.config_manager.config.get('JIRA_URL')}/browse/{sel_sub_name}"
                 task_info_to_show.insert(0, f"{status_icon} {jira_link}")
 
                 summary = cached_item.get('data', {}).get('fields', {}).get('summary', {})
                 jira_comments = list(reversed(cached_item.get('data', {}).get('fields', {}).get('comment', {}).get('comments', {})))
-                trello_data = cached_item.get('trello_data', {})
 
                 sub_task_with_desc = f"{sel_sub_name} {summary}"
 
@@ -615,70 +601,6 @@ def display_main_view(stdscr, data, command_buffer="", full_redraw=False, select
                 effective_main_width, effective_main_width, content_height_obj,
                 prefix="", subsequent_indent_offset=0,
                 attr=curses.color_pair(COLOR_PAIR_PAUSED))
-            row += lines_used_note
-
-
-        # 1. Load the JSON string into a Python dictionary
-        #trello_data = json.loads(trello_data_string)
-
-        # 2. Create an empty list to hold the formatted comments
-        trello_comments = []
-
-        # 3. Loop through each action in the 'actions' list
-        if trello_data and len(trello_data):
-            for action in trello_data['actions']:
-                # We only want actions that are comments
-                if action['type'] == 'commentCard':
-                    # Parse the date string into a datetime object
-                    # The 'Z' at the end means UTC, which we replace for Python's parser
-                    date_obj = datetime.fromisoformat(action['date'].replace('Z', '+00:00'))
-
-                    # Format the date into a more readable string (e.g., 07.08.2025 12:40)
-                    formatted_date = date_obj.strftime('%d.%m %H:%M')
-
-                    # Create a dictionary for the comment and add it to our list
-                    trello_comments.append({
-                        'comment_text': action['data']['text'],
-                        'creator_name': action['memberCreator']['fullName'],
-                        'date': formatted_date
-                    })
-
-        # 4. Print the final array beautifully ✨
-        #print(json.dumps(trello_comments, indent=4, ensure_ascii=False))
-
-        if len(trello_comments):
-            lines_used_note = _draw_wrapped_text(stdscr, "┌─────TRELLO─ ─── ── ── ─ ─  ─   ─", row, 4,
-                effective_main_width, effective_main_width, content_height_obj,
-                prefix="", subsequent_indent_offset=0,
-                attr=curses.color_pair(COLOR_PAIR_GREY))
-            row += lines_used_note
-
-        for note_idx, note in enumerate(trello_comments[:5]):
-            note_body = note.get("comment_text", "")
-            note_from = note.get("creator_name", "")
-            comment_date = note.get("date", "")
-            note_body = note_body.replace("\n", " ")
-            note_body = note_from + ": " + note_body
-            if content_height_obj[0] <= 0 : break
-            if effective_main_width <= 4: break
-            prefix_note = f"| "
-            start_col_note = 4
-            max_text_width_note = effective_main_width - start_col_note - len(prefix_note)
-
-            note_body = comment_date + ": " + note_body[0:max_text_width_note - 17] + "..."
-
-            if max_text_width_note < 0 : max_text_width_note = 0
-            lines_used_note = _draw_wrapped_text(stdscr, note_body, row, start_col_note,
-                                            max_text_width_note, effective_main_width, content_height_obj,
-                                            prefix=prefix_note, subsequent_indent_offset=len(prefix_note),
-                                            attr=curses.color_pair(COLOR_PAIR_GREY))
-            row += lines_used_note
-
-        if len(trello_comments):
-            lines_used_note = _draw_wrapped_text(stdscr, "└──────────── ─── ── ── ─ ─  ─   ─", row, 4,
-                effective_main_width, effective_main_width, content_height_obj,
-                prefix="", subsequent_indent_offset=0,
-                attr=curses.color_pair(COLOR_PAIR_GREY))
             row += lines_used_note
 
 

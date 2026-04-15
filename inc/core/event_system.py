@@ -187,7 +187,6 @@ class EventNames:
     
     # Comment/notification events
     JIRA_COMMENT_VIEWED = 'jira_comment_viewed'
-    TRELLO_COMMENT_VIEWED = 'trello_comment_viewed'
     PR_COMMENT_VIEWED = 'pr_comment_viewed'
     NOTIFICATION_DISMISSED = 'notification_dismissed'
 

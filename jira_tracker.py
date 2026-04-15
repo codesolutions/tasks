@@ -183,8 +183,9 @@ def main(stdscr):
         print("Fatal: Could not load language files. Exiting.", file=sys.stderr)
         return "EXIT"
 
-    if inc.config_manager.config.get("API_TOKEN") == "PASTE_YOUR_BEARER_TOKEN_HERE":
-        print("ERROR: API_TOKEN has not been set in config.json. Please update it and restart.", file=sys.stderr)
+    bb_password = inc.config_manager.config.get("BB_APP_PASSWORD", "")
+    if not bb_password or bb_password.startswith("PASTE_"):
+        print("ERROR: BB_APP_PASSWORD has not been set in config.json. Please update it and restart.", file=sys.stderr)
         return "EXIT"
 
     # Setup curses
@@ -374,7 +375,7 @@ def main(stdscr):
             # Initial state update
             update_current_state()
         
-        # Check if it's time to poll external services (Jira/Trello/PR) or if forced
+        # Check if it's time to poll external services (Jira/PR) or if forced
         should_poll_ext_services = (current_time - last_ext_services_poll_time >= ext_services_poll_interval) or force_pr_poll
         if should_poll_ext_services:
             with data_lock:
@@ -422,17 +423,13 @@ def main(stdscr):
                         if jira_ticket_id:
                             needs_save = False
                             with jira_cache_lock:
-                                if jira_ticket_id in jira_cache and (jira_cache[jira_ticket_id].get('new_jira_comment') or jira_cache[jira_ticket_id].get('new_trello_comment')):
+                                if jira_ticket_id in jira_cache and jira_cache[jira_ticket_id].get('new_jira_comment'):
                                     jira_cache[jira_ticket_id]['new_jira_comment'] = False
-                                    jira_cache[jira_ticket_id]['new_trello_comment'] = False
 
                                     # Remove related permanent notifications
                                     jira_notif = f"New Jira comment in {jira_ticket_id}"
-                                    trello_notif = f"New Trello comment in {jira_ticket_id}"
                                     if jira_notif in permanent_notifications:
                                         permanent_notifications.remove(jira_notif)
-                                    if trello_notif in permanent_notifications:
-                                        permanent_notifications.remove(trello_notif)
                                     needs_save = True
                             # Save outside the lock to prevent nested locking and remove notifications
                             if needs_save:
@@ -490,17 +487,13 @@ def main(stdscr):
                             jira_ticket_id = inc.helpers.get_jira_ticket_from_url(sub_task_name)
                             needs_save = False
                             with jira_cache_lock:
-                                if jira_ticket_id in jira_cache and (jira_cache[jira_ticket_id].get('new_jira_comment') or jira_cache[jira_ticket_id].get('new_trello_comment')):
+                                if jira_ticket_id in jira_cache and jira_cache[jira_ticket_id].get('new_jira_comment'):
                                     jira_cache[jira_ticket_id]['new_jira_comment'] = False
-                                    jira_cache[jira_ticket_id]['new_trello_comment'] = False
 
                                     # Remove related permanent notifications
                                     jira_notif = f"New Jira comment in {jira_ticket_id}"
-                                    trello_notif = f"New Trello comment in {jira_ticket_id}"
                                     if jira_notif in permanent_notifications:
                                         permanent_notifications.remove(jira_notif)
-                                    if trello_notif in permanent_notifications:
-                                        permanent_notifications.remove(trello_notif)
                                     needs_save = True
                             # Save outside the lock to prevent nested locking and remove notifications
                             if needs_save:
@@ -521,17 +514,13 @@ def main(stdscr):
                             jira_ticket_id = inc.helpers.get_jira_ticket_from_url(sub_task_name)
                             needs_save = False
                             with jira_cache_lock:
-                                if jira_ticket_id in jira_cache and (jira_cache[jira_ticket_id].get('new_jira_comment') or jira_cache[jira_ticket_id].get('new_trello_comment')):
+                                if jira_ticket_id in jira_cache and jira_cache[jira_ticket_id].get('new_jira_comment'):
                                     jira_cache[jira_ticket_id]['new_jira_comment'] = False
-                                    jira_cache[jira_ticket_id]['new_trello_comment'] = False
 
                                     # Remove related permanent notifications
                                     jira_notif = f"New Jira comment in {jira_ticket_id}"
-                                    trello_notif = f"New Trello comment in {jira_ticket_id}"
                                     if jira_notif in permanent_notifications:
                                         permanent_notifications.remove(jira_notif)
-                                    if trello_notif in permanent_notifications:
-                                        permanent_notifications.remove(trello_notif)
                                     needs_save = True
                             # Save outside the lock to prevent nested locking and remove notifications
                             if needs_save:
@@ -1043,15 +1032,7 @@ if __name__ == "__main__":
                 driver_path=inc.config_manager.config.get("CHROME_DRIVER_PATH"),
                 permanent_notifications_ref=permanent_notifications
             )
-            
-            get_and_save_web_session(
-                service_name="Trello",
-                login_url=f"{inc.config_manager.config.get('TRELLO_URL')}/login",
-                session_file=inc.config_manager.config.get("TRELLO_SESSION_FILE"),
-                driver_path=inc.config_manager.config.get("CHROME_DRIVER_PATH"),
-                permanent_notifications_ref=permanent_notifications
-            )
-            
+
             print("\\nLogin process finished. Restarting application in 3 seconds...")
             time.sleep(3)
             continue

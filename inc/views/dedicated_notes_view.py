@@ -24,7 +24,6 @@ def display_dedicated_notes_view(stdscr, data, command_buffer, entity_for_notes,
     title = t('dedicated_notes_title')
     notes_list_to_display = []
     jira_comments = []
-    trello_comments = []
     task_info_to_show = []
 
     # Get cache copy if available
@@ -47,19 +46,18 @@ def display_dedicated_notes_view(stdscr, data, command_buffer, entity_for_notes,
             if subtask_details and isinstance(subtask_details, dict):
                 notes_list_to_display = subtask_details.get("notes", [])
 
-            # Get Jira and Trello data for subtask
+            # Get Jira data for subtask
             from inc.helpers import get_jira_ticket_from_url
             jira_ticket_id = get_jira_ticket_from_url(entity_name)
             cached_item = cache_copy.get(jira_ticket_id, {})
-            
-            # Mark Jira/Trello comments as read when opening this view
+
+            # Mark Jira comments as read when opening this view
             needs_save = False
             if jira_cache and jira_cache_lock and jira_ticket_id:
                 with jira_cache_lock:
                     if jira_ticket_id in jira_cache:
-                        if jira_cache[jira_ticket_id].get('new_jira_comment') or jira_cache[jira_ticket_id].get('new_trello_comment'):
+                        if jira_cache[jira_ticket_id].get('new_jira_comment'):
                             jira_cache[jira_ticket_id]['new_jira_comment'] = False
-                            jira_cache[jira_ticket_id]['new_trello_comment'] = False
                             needs_save = True
                 # Save outside the lock to prevent nested locking
                 if needs_save:
@@ -88,15 +86,6 @@ def display_dedicated_notes_view(stdscr, data, command_buffer, entity_for_notes,
                 if summary:
                     task_info_to_show.append(f"Summary: {summary}")
 
-                # Check for Trello link in description
-                jira_description = cached_item.get('data', {}).get('fields', {}).get('description', "")
-                if jira_description and isinstance(jira_description, str):
-                    pattern = r"(https://trello\.com/c/[^]]+)"
-                    match = re.search(pattern, jira_description)
-                    if match:
-                        trello_link = match.group(0)
-                        task_info_to_show.append(f"Trello: {trello_link}")
-
                 # VF link
                 vf_link = next((l.get("object",{}).get("url") for l in cached_item.get('remotelinks',[]) if l.get("globalId") == "VF - Log Hours"), None)
                 if vf_link and vf_link != "N/A":
@@ -114,19 +103,6 @@ def display_dedicated_notes_view(stdscr, data, command_buffer, entity_for_notes,
 
                 # Get Jira comments
                 jira_comments = list(reversed(cached_item.get('data', {}).get('fields', {}).get('comment', {}).get('comments', [])))
-
-                # Get Trello comments
-                trello_data = cached_item.get('trello_data', {})
-                if trello_data and len(trello_data):
-                    for action in trello_data['actions']:
-                        if action['type'] == 'commentCard':
-                            date_obj = datetime.fromisoformat(action['date'].replace('Z', '+00:00'))
-                            formatted_date = date_obj.strftime('%d.%m %H:%M')
-                            trello_comments.append({
-                                'comment_text': action['data']['text'],
-                                'creator_name': action['memberCreator']['fullName'],
-                                'date': formatted_date
-                            })
         else:
             title = t('dedicated_notes_no_selection')
     else:
@@ -240,28 +216,6 @@ def display_dedicated_notes_view(stdscr, data, command_buffer, entity_for_notes,
         add_virtual_content("└──────────── ─── ── ── ─ ─  ─   ─", curses.color_pair(COLOR_PAIR_PAUSED))
         add_virtual_content("")  # Empty line for spacing
 
-    # Display Trello comments in full detail
-    if trello_comments:
-        add_virtual_content("┌─────TRELLO COMMENTS─── ─── ── ── ─ ─  ─   ─", curses.color_pair(COLOR_PAIR_GREY))
-        for comment in trello_comments:
-            comment_text = comment.get('comment_text', '')
-            creator_name = comment.get('creator_name', '')
-            comment_date = comment.get('date', '')
-
-            # Show header with author and date
-            header = f"{creator_name} - {comment_date}"
-            add_virtual_content(header, curses.color_pair(COLOR_PAIR_GREY) | curses.A_BOLD, prefix="| ")
-
-            # Show full comment text (preserve newlines and wrap long lines)
-            if comment_text:
-                for line in comment_text.split('\n'):
-                    add_virtual_content(line, curses.color_pair(COLOR_PAIR_GREY), prefix="| ")
-
-            # Add separator between comments
-            add_virtual_content("---", curses.color_pair(COLOR_PAIR_GREY), prefix="| ")
-        add_virtual_content("└──────────── ─── ── ── ─ ─  ─   ─", curses.color_pair(COLOR_PAIR_GREY))
-        add_virtual_content("")  # Empty line for spacing
-
     # Display Jira comments in full detail
     if jira_comments:
         add_virtual_content("┌─────JIRA COMMENTS─── ─── ── ── ─ ─  ─   ─", curses.color_pair(COLOR_PAIR_STANDOUT))
@@ -362,7 +316,7 @@ def display_dedicated_notes_view(stdscr, data, command_buffer, entity_for_notes,
         pr_details_v2 = subtask_details.get("pr_details", {})
         has_pr_comments = pr_details_v2 and pr_details_v2.get('version') == 2 and pr_details_v2.get('comments', [])
     
-    if not notes_list_to_display and not jira_comments and not trello_comments and not task_info_to_show and not has_pr_comments and entity_for_notes:
+    if not notes_list_to_display and not jira_comments and not task_info_to_show and not has_pr_comments and entity_for_notes:
         add_virtual_content("No notes, comments, or details available for this item.")
 
     # Now render the visible portion of virtual content based on scroll offset

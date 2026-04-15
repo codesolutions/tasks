@@ -513,12 +513,14 @@ class AddPRCommand(BaseCommand):
             )
         
         pr_url = " ".join(args[1:])
-        
-        # Simple validation for GitHub URL
-        if not pr_url.startswith("https://github.com/"):
+
+        # Simple validation for Bitbucket URL
+        from inc.integrations.pr_monitor import is_bitbucket_pr_url
+        if not is_bitbucket_pr_url(pr_url):
             return CommandResult(
                 success=False,
-                message="Error: PR URL must be a valid GitHub URL (https://github.com/...)"
+                message="Error: PR URL must be a valid Bitbucket URL "
+                        "(https://bitbucket.org/{workspace}/{repo}/pull-requests/{id})"
             )
         
         subtask_name, _ = context.current_ticket_subtask_list[context.selected_subtask_idx]

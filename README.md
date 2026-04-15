@@ -19,7 +19,7 @@ A modern, terminal-based project tracking application with a **modular command s
   * **Project & Task Management**: Create, switch, and complete projects with nested subtasks
   * **Time Tracking**: Built-in work sessions with start/pause/resume/log capabilities
   * **Pull Request Integration**: Monitor PR status with real-time updates
-  * **Jira & Trello Integration**: Automatic ticket synchronization and status updates
+  * **Jira & Bitbucket Integration**: Automatic ticket synchronization, PR monitoring, and status updates
   * **Smart Focus System**: Focus on specific tasks for better productivity tracking
   * **Advanced Notifications**: Desktop alerts for meetings, PR updates, and events
   * **Multi-View Interface**: Main view, time log, daily notes, and dedicated note editing
@@ -49,10 +49,9 @@ A modern, terminal-based project tracking application with a **modular command s
 
     ```json
     {
-        "API_TOKEN": "PASTE_YOUR_BEARER_TOKEN_HERE",
-        "STASH_URL": "http://URL_TO_STASH:7990",
-        "STASH_REVIEW_URL": "http://URL_TO_STASH:7990/rest/api/latest/dashboard/pull-requests?state=OPEN&role=REVIEWER",
-        "USER_ID": 1234,
+        "BB_USERNAME": "you@example.com",
+        "BB_APP_PASSWORD": "PASTE_YOUR_BITBUCKET_APP_PASSWORD_OR_API_TOKEN_HERE",
+        "BB_WORKSPACE": "your-workspace",
         "LANGUAGE": "fi",
         "NOTIFICATION_WINDOW_TITLE": "TODAYTASKS",
         "BROWSER_COMMAND": [
@@ -63,8 +62,6 @@ A modern, terminal-based project tracking application with a **modular command s
         "JIRA_URL": "https://your_org_here.atlassian.net",
         "JIRA_SESSION_FILE": "jira_session.pkl",
         "CHROME_DRIVER_PATH": "chromedriver-linux64/chromedriver",
-        "TRELLO_URL": "https://trello.com",
-        "TRELLO_SESSION_FILE": "trello_session.pkl",
         "CALENDAR_CSV": "https://docs.google.com/spreadsheets/d/e/YOUR_EXPORTED_CALENDAR_CSV_HERE/pub?gid=0&single=true&output=csv",
         "WEB_MONITORING": {
             "ENABLED": true,
@@ -81,18 +78,15 @@ A modern, terminal-based project tracking application with a **modular command s
     }
     ```
 
-      * `API_TOKEN`: Your Bearer token for the Stash/Bitbucket API.
-      * `STASH_URL`: The base URL for your Stash/Bitbucket instance.
-      * `STASH_REVIEW_URL`: The API endpoint for fetching pull requests for review.
-      * `USER_ID`: Your numeric user ID from the API. This is used to distinguish your comments from others'.
+      * `BB_USERNAME`: Your Bitbucket username, or the email address of your Atlassian account if you are authenticating with an Atlassian API token (tokens starting with `ATATT3x...`).
+      * `BB_APP_PASSWORD`: A Bitbucket app password (create at <https://bitbucket.org/account/settings/app-passwords/>) or an Atlassian API token.
+      * `BB_WORKSPACE`: The slug of your Bitbucket workspace (the part in the URL between `bitbucket.org/` and the repository name).
       * `LANGUAGE`: Set the display language. Defaults to `"fi"`. Change to `"en"` for English.
       * `NOTIFICATION_WINDOW_TITLE`: The title of the terminal window to focus when a notification is sent.
       * `BROWSER_COMMAND`: A list containing the command and arguments to launch a web browser for meeting links.
       * `JIRA_URL`: The URL of your Jira instance.
       * `JIRA_SESSION_FILE`: The file to store your Jira session.
       * `CHROME_DRIVER_PATH`: (Optional) The path to your chromedriver executable. If not provided or invalid, webdriver-manager will automatically download the correct ChromeDriver version.
-      * `TRELLO_URL`: The URL of your Trello instance.
-      * `TRELLO_SESSION_FILE`: The file to store your Trello session.
       * `CALENDAR_CSV`: The URL to your external calendar in CSV format.
 
 3.  **Language Files**: The application looks for translations in a `lang` directory. Ensure `lang/en.json` and `lang/fi.json` exist.
@@ -189,7 +183,7 @@ A modern, terminal-based project tracking application with a **modular command s
 | :--- | :--- |
 | `h` | Toggle command help footer |
 | `q` | Quit the application |
-| `login` | Restart for Jira/Trello login |
+| `login` | Restart for Jira login |
 | `Shift+TAB` / `ESC` | Enter/Exit dedicated views |
 | `←` / `→` | Navigate daily notes |
 | `↑` / `↓` | Select items in lists |

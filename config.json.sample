@@ -1,19 +1,17 @@
 {
-    "API_TOKEN": "PASTE_YOUR_GITHUB_PAT_HERE",
-    "GITHUB_ORG": "owner",
-    "GITHUB_USERNAME": "your-github-username",
+    "BB_USERNAME": "you@example.com",
+    "BB_APP_PASSWORD": "PASTE_YOUR_BITBUCKET_APP_PASSWORD_OR_API_TOKEN_HERE",
+    "BB_WORKSPACE": "your-workspace",
     "LANGUAGE": "en",
     "NOTIFICATION_WINDOW_TITLE": "TODAYTASKS",
     "BROWSER_COMMAND": [
         "/usr/bin/google-chrome",
         "--profile-directory=Profile 1",
         "--new-window"
-    ]
+    ],
     "JIRA_URL": "https://your_org_here.atlassian.net",
     "JIRA_SESSION_FILE": "jira_session.pkl",
     "CHROME_DRIVER_PATH": "",
-    "TRELLO_URL": "https://trello.com",
-    "TRELLO_SESSION_FILE": "trello_session.pkl",
     "CALENDAR_CSV": "https://docs.google.com/spreadsheets/d/e/YOUR_EXPORTED_CALENDAR_CSV_HERE/pub?gid=0&single=true&output=csv",
     "WEB_MONITORING": {
         "ENABLED": true,

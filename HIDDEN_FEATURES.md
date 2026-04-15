@@ -95,7 +95,7 @@ logtime 45m break
 - Automatic browser opening for meeting links
 - Focus window activation
 
-### **Jira/Trello Comments**:  
+### **Jira Comments**:
 - Desktop notifications for new comments
 - Real-time polling every 2 minutes
 - Comments marked as read when viewing task
@@ -103,7 +103,7 @@ logtime 45m break
 ### **PR Status Notifications**:
 - Notifications when PRs need attention
 - Approval status tracking
-- Integration with Stash/Bitbucket
+- Integration with Bitbucket Cloud (REST API v2.0)
 
 ---
 
@@ -135,11 +135,11 @@ f <subtask-number>     # Focus on specific subtask
 - Selector-based content monitoring
 - Desktop notifications on changes
 
-### **Jira/Trello Real-time Sync**:
+### **Jira Real-time Sync**:
 - Live ticket status updates
-- Comment synchronization  
+- Comment synchronization
 - Automatic cache refresh
-- PR status integration
+- Bitbucket PR status integration
 
 ---
 

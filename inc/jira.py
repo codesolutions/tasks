@@ -49,9 +49,9 @@ def get_and_save_web_session(service_name, login_url, session_file, driver_path,
     """
     Handles interactive browser login to capture session cookies for a given service.
     Uses webdriver-manager to automatically handle ChromeDriver versions.
-    
+
     Args:
-        service_name (str): The name of the service (e.g., "Jira", "Trello").
+        service_name (str): The name of the service (e.g., "Jira").
         login_url (str): The URL to open for the user to log in.
         session_file (str): The path to save the session cookie file.
         driver_path (str): Path to the chromedriver executable (optional, falls back to webdriver-manager).
@@ -63,7 +63,7 @@ def get_and_save_web_session(service_name, login_url, session_file, driver_path,
 
     print(f"\n--- {service_name} Login Process ---")
     print(f"\n--- {login_url} login url debug ---")
-    
+
     if not SELENIUM_AVAILABLE:
         permanent_notifications_ref.append(f"ERROR: Selenium and webdriver-manager libraries not found for {service_name} login.")
         print(f"ERROR: Selenium and webdriver-manager libraries not found for {service_name} login.")
@@ -78,7 +78,7 @@ def get_and_save_web_session(service_name, login_url, session_file, driver_path,
 
     print(f"\n--- {service_name} Login Process ---")
     print("-> Starting browser...")
-    
+
     # Try to get ChromeDriver using webdriver-manager first, fallback to configured path
     driver_executable_path = None
     try:
@@ -96,7 +96,7 @@ def get_and_save_web_session(service_name, login_url, session_file, driver_path,
             print(f"ERROR: Cannot find ChromeDriver for {service_name}. webdriver-manager failed and no valid CHROME_DRIVER_PATH configured.")
             time.sleep(5)
             return False
-    
+
     try:
         service = Service(executable_path=driver_executable_path)
         driver = webdriver.Chrome(service=service, options=Options())
@@ -134,8 +134,6 @@ def get_and_save_web_session(service_name, login_url, session_file, driver_path,
 
 
 
-
-
 def load_jira_cache():
     """Loads the Jira cache from a file on startup and returns it."""
     try:
@@ -155,52 +153,6 @@ def save_jira_cache(cache_to_save, lock_to_use):
             logging.info(f"File save failed: {JIRA_CACHE_FILE}")
             pass
 
-def get_trello_card_details(card_id, permanent_notifications_ref):
-    
-    global config
-    logging.info(f"Get trello card {card_id}")
-    session_file = os.path.join(SCRIPT_DIR, config.get("TRELLO_SESSION_FILE"))
-    jira_base_url = config.get("TRELLO_URL")
-
-    if not os.path.exists(session_file):
-        if f"{t('jira_login_prompt', service='Trello')}" not in permanent_notifications_ref: permanent_notifications_ref.append(f"{t('jira_login_prompt', service='Trello')}")
-        return None
-
-    session = requests.Session()
-    try:
-        with open(session_file, 'rb') as f:
-            for cookie in pickle.load(f):
-                session.cookies.set(cookie['name'], cookie['value'], domain=cookie['domain'])
-    except Exception:
-        if t('jira_session_error') not in permanent_notifications_ref: permanent_notifications_ref.append(t('jira_session_error'))
-        logging.info(f"{t('jira_session_error')}")
-        return None
-
-
-    issue_url = f'{jira_base_url}/1/cards/{card_id}?fields=id&actions=commentCard%2CcopyCommentCard%2CcreateCard%2CcreateInboxCard%2CcopyCard%2CcopyInboxCard&actions_display=true&action_reactions=true&actions_limit=50'
-
-    
-    test = session.get('https://trello.com/u/u/boards')
-    if test.status_code != 200:
-        if f"{t('jira_login_prompt', service='Trello')}" not in permanent_notifications_ref: 
-            permanent_notifications_ref.append(f"{t('jira_login_prompt', service='Trello')}")
-        return None
-
-    try:
-        issue_response = session.get(issue_url, timeout=15)
-        issue_response.raise_for_status()
-        issue_data = issue_response.json()
-
-        return issue_data
-    except requests.exceptions.HTTPError as e:
-        logging.error(f"Failed to get: {issue_url}")
-        # msg = t('jira_auth_error') if e.response.status_code in [401, 403] else t('jira_http_error', status=e.response.status_code)
-        # if msg not in permanent_notifications_ref: permanent_notifications_ref.append(msg)
-    except requests.exceptions.RequestException as e:
-        msg = t('jira_generic_error', e=str(e))
-        logging.error(f"Failed to get: {issue_url} with error: {msg}")
-        # if msg not in permanent_notifications_ref: permanent_notifications_ref.append(msg)
-    return None
 
 def get_jira_issue_details(issue_id, permanent_notifications_ref):
     global config
@@ -251,17 +203,6 @@ def get_jira_issue_details(issue_id, permanent_notifications_ref):
         if f"{t('jira_login_prompt', service='Jira')}" not in permanent_notifications_ref: permanent_notifications_ref.append(f"{t('jira_login_prompt', service='Jira')}")
     return None, None
 
-def get_trello_id(data):
-    jira_description = data.get('fields', {}).get('description', "")
-    trello_id = ""
-    if (jira_description and isinstance(jira_description, str)):
-        # API v2 way, no objects
-        pattern = r"(https://trello\.com/c/[^]]+)"
-        match = re.search(pattern, jira_description)
-        if match:
-            trello_link = match.group(0)
-            trello_id = trello_link.split('/')[-1]
-    return trello_id
 
 def poll_all_visible_subtasks(data, cache_ref, lock_ref):
     """
@@ -269,24 +210,24 @@ def poll_all_visible_subtasks(data, cache_ref, lock_ref):
     This function should be called periodically based on POLL_EXT_SERVICES_INTERVAL_MINUTES.
     """
     from inc.helpers import get_jira_ticket_from_url
-    
+
     if not data:
         return
-    
+
     # Get all visible subtasks from current ticket
     current_ticket = data.get("current_ticket")
     visible_jira_tickets = set()
-    
+
     if current_ticket:
         subtasks = data.get("sub_tasks", {}).get(current_ticket, {})
         show_hidden = data.get("show_hidden_tasks", False)
-        
+
         for sub_name, sub_details in subtasks.items():
             if isinstance(sub_details, dict) and (show_hidden or sub_details.get("status") != "hidden"):
                 jira_ticket_id = get_jira_ticket_from_url(sub_name)
                 if jira_ticket_id and jira_ticket_id != sub_name:  # Only if it's actually a Jira ticket
                     visible_jira_tickets.add(jira_ticket_id)
-    
+
     # Also check paused tasks for Jira tickets
     for paused_task in data.get("paused_tasks", []):
         paused_subtasks = paused_task.get("sub_tasks", {})
@@ -295,18 +236,18 @@ def poll_all_visible_subtasks(data, cache_ref, lock_ref):
                 jira_ticket_id = get_jira_ticket_from_url(sub_name)
                 if jira_ticket_id and jira_ticket_id != sub_name:
                     visible_jira_tickets.add(jira_ticket_id)
-    
+
     # Queue tickets that need refreshing
     current_time = time.time()
     JIRA_CACHE_TIMEOUT = 60  # Cache timeout in seconds
-    
+
     with lock_ref:
         cache_copy = cache_ref.copy()
-    
+
     for jira_ticket_id in visible_jira_tickets:
         cached_item = cache_copy.get(jira_ticket_id)
         should_fetch = not cached_item or (current_time - cached_item.get('timestamp', 0)) > JIRA_CACHE_TIMEOUT
-        
+
         if should_fetch and jira_ticket_id not in jira_in_flight:
             jira_in_flight.add(jira_ticket_id)
             jira_request_queue.put(jira_ticket_id)
@@ -317,7 +258,7 @@ def jira_queue_worker(stop_event, permanent_notifications_ref, cache_ref, lock_r
     Worker thread that processes Jira data requests from a queue, acting on a shared cache.
     """
     from inc.integrations.notification_service import send_desktop_notification
-    
+
     while not stop_event.is_set():
         try:
             issue_id = jira_request_queue.get(timeout=1)
@@ -327,16 +268,10 @@ def jira_queue_worker(stop_event, permanent_notifications_ref, cache_ref, lock_r
 
             # If data was fetched successfully, update the SHARED cache
             if issue_data:
-                trello_id = get_trello_id(issue_data)
-                trello_data = {}
-                if trello_id != "":
-                    trello_data = get_trello_card_details(trello_id, permanent_notifications_ref)
-
                 with lock_ref: # Use the passed-in lock
                     is_initial_fetch = issue_id not in cache_ref
 
                     new_jira_comment_flag = False
-                    new_trello_comment_flag = False
 
                     # Check for new Jira comments
                     new_jira_comments = issue_data.get('fields', {}).get('comment', {}).get('comments', [])
@@ -347,7 +282,7 @@ def jira_queue_worker(stop_event, permanent_notifications_ref, cache_ref, lock_r
                             notification_msg = f"New Jira comment in {issue_id}"
                             if notification_msg not in permanent_notifications_ref:
                                 permanent_notifications_ref.append(notification_msg)
-                            
+
                             # Send desktop notification for new Jira comment
                             try:
                                 send_desktop_notification(
@@ -357,38 +292,13 @@ def jira_queue_worker(stop_event, permanent_notifications_ref, cache_ref, lock_r
                             except Exception as e:
                                 logging.error(f"Failed to send desktop notification for Jira comment: {e}")
 
-                    # Check for new Trello comments
-                    trello_comment_count = 0
-                    if trello_data and 'actions' in trello_data:
-                        new_trello_comments = [a for a in trello_data['actions'] if a['type'] == 'commentCard']
-                        trello_comment_count = len(new_trello_comments)
-                        if not is_initial_fetch:
-                            old_trello_comment_count = cache_ref[issue_id].get('trello_comment_count', 0)
-                            if trello_comment_count > old_trello_comment_count:
-                                new_trello_comment_flag = True
-                                notification_msg = f"New Trello comment in {issue_id}"
-                                if notification_msg not in permanent_notifications_ref:
-                                    permanent_notifications_ref.append(notification_msg)
-                                
-                                # Send desktop notification for new Trello comment
-                                try:
-                                    send_desktop_notification(
-                                        "💬 New Trello Comment", 
-                                        f"New comment detected in {issue_id}"
-                                    )
-                                except Exception as e:
-                                    logging.error(f"Failed to send desktop notification for Trello comment: {e}")
-
                     # Use the passed-in cache reference
                     cache_ref[issue_id] = {
                         'data': issue_data,
-                        'trello_data': trello_data,
                         'remotelinks': remotelink_data,
                         'timestamp': time.time(),
                         'jira_comment_count': len(new_jira_comments),
-                        'trello_comment_count': trello_comment_count,
                         'new_jira_comment': new_jira_comment_flag,
-                        'new_trello_comment': new_trello_comment_flag
                     }
                 # Save the updated shared cache to the file
                 save_jira_cache(cache_ref, lock_ref)

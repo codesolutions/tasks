@@ -4,7 +4,7 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 
 ## Project Overview
 
-This is a **Terminal Project Tracker** - a curses-based Python application for developers to manage projects, tickets (tasks), and their development lifecycle. It integrates with Jira, Trello, and Git repositories to provide real-time status updates, PR monitoring, and desktop notifications.
+This is a **Terminal Project Tracker** - a curses-based Python application for developers to manage projects, tickets (tasks), and their development lifecycle. It integrates with Jira and Bitbucket Cloud to provide real-time status updates, PR monitoring, and desktop notifications.
 
 ## Development Setup
 
@@ -47,13 +47,14 @@ gnome-terminal --title='TODAYTASKS' -- /bin/bash -c 'source .venv/bin/activate &
 - **`inc/`** - Internal modules directory
   - **`config_manager.py`** - Configuration loading and translation system
   - **`helpers.py`** - Utility functions and translation helpers
-  - **`jira.py`** - Jira/Trello integration, session management, and API calls
+  - **`jira.py`** - Jira integration, session management, and API calls
+  - **`integrations/pr_monitor.py`** - Bitbucket Cloud PR monitoring via the REST API
 
 ### Key Architectural Patterns
 
 **Multi-threaded Design**: 
 - Main thread handles UI rendering and user input
-- Background threads for API polling (Jira, Trello, PR status)
+- Background threads for API polling (Jira, Bitbucket PR status)
 - Thread-safe queuing system for Jira requests (`jira_request_queue`, `jira_in_flight`)
 - Shared cache with locking (`jira_cache_lock`)
 
@@ -83,8 +84,7 @@ The application maintains state in a single `data` dictionary with these key str
 
 ### Integration Points
 - **Jira**: Fetches ticket status, comments, and metadata via session cookies
-- **Trello**: Card details and comments for tickets with Trello links  
-- **Stash/Bitbucket**: Enhanced PR monitoring with full comment threads, reviewer status, and detailed notifications
+- **Bitbucket Cloud**: PR monitoring through the REST API v2.0. Authenticates with an app password or an Atlassian API token (see `BB_USERNAME` / `BB_APP_PASSWORD` / `BB_WORKSPACE` in `config.json`). Surfaces reviewer status, approval state, and full comment threads, and polls workspace repos for PRs awaiting your review.
 - **Desktop**: Native notifications via `notify-send`
 - **Browser**: Automatic link opening for meetings and external resources
 
@@ -138,7 +138,8 @@ python3 jira_tracker.py
 
 - `jira_data.json` - Main application state (projects, tickets, notes)
 - `jira_cache.pkl` - Cached API responses
-- `jira_session.pkl` / `trello_session.pkl` - Authentication cookies
+- `jira_session.pkl` - Jira authentication cookies
+- `cache/pr_cache.pkl` - Cached Bitbucket PR details (survives restarts)
 - `config.json` - Application configuration
 - `debug.log` - Application logs
 

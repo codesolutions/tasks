@@ -5,7 +5,7 @@ Notification Handlers for Event System
 This module contains event handlers that manage permanent notifications
 based on user actions like selecting tickets, switching projects, etc.
 
-The handlers automatically mark Jira/Trello/PR comments as read and
+The handlers automatically mark Jira/PR comments as read and
 remove notifications when the user views the relevant content.
 """
 
@@ -65,28 +65,28 @@ class NotificationManager:
     def _handle_ticket_selected(self, event_data: Dict[str, Any]):
         """
         Handle when a ticket/subtask is selected with arrow keys.
-        
-        This should mark Jira/Trello/PR comments as read for the selected ticket.
+
+        This should mark Jira/PR comments as read for the selected ticket.
         """
         if not self._initialized:
             return
-            
+
         ticket_name = event_data.get('ticket_name')
         project_name = event_data.get('project_name')
-        
+
         if not ticket_name or not project_name:
             return
-            
+
         logger.debug(f"Handling ticket selection: {project_name}/{ticket_name}")
-        
+
         # Extract Jira ticket ID
         jira_ticket_id = get_jira_ticket_from_url(ticket_name)
         if not jira_ticket_id:
             return
-            
-        # Mark Jira/Trello comments as read
+
+        # Mark Jira comments as read
         self._mark_comments_as_read(jira_ticket_id)
-        
+
         # Mark PR comments as read
         self._mark_pr_comments_as_read(project_name, ticket_name)
     
@@ -138,42 +138,36 @@ class NotificationManager:
     
     def _mark_comments_as_read(self, jira_ticket_id: str):
         """
-        Mark Jira and Trello comments as read for a specific ticket.
-        
+        Mark Jira comments as read for a specific ticket.
+
         Args:
             jira_ticket_id: The Jira ticket ID (e.g., 'DCOLO-376')
         """
         if not self._initialized or not jira_ticket_id:
             return
-            
+
         try:
             needs_save = False
-            
+
             with self.jira_cache_lock:
                 if jira_ticket_id in self.jira_cache:
                     cache_entry = self.jira_cache[jira_ticket_id]
-                    
+
                     # Mark as read if there were new comments
-                    if cache_entry.get('new_jira_comment') or cache_entry.get('new_trello_comment'):
+                    if cache_entry.get('new_jira_comment'):
                         cache_entry['new_jira_comment'] = False
-                        cache_entry['new_trello_comment'] = False
                         needs_save = True
-                        
-                        logger.debug(f"Marked Jira/Trello comments as read for {jira_ticket_id}")
-                
+
+                        logger.debug(f"Marked Jira comments as read for {jira_ticket_id}")
+
                 # Remove related notifications from permanent notifications
                 jira_notif = f"New Jira comment in {jira_ticket_id}"
-                trello_notif = f"New Trello comment in {jira_ticket_id}"
-                
+
                 notifications_removed = []
                 if jira_notif in self.permanent_notifications:
                     self.permanent_notifications.remove(jira_notif)
                     notifications_removed.append("Jira")
-                    
-                if trello_notif in self.permanent_notifications:
-                    self.permanent_notifications.remove(trello_notif)
-                    notifications_removed.append("Trello")
-                
+
                 if notifications_removed:
                     logger.debug(f"Removed {', '.join(notifications_removed)} notifications for {jira_ticket_id}")
             

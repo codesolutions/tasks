@@ -14,17 +14,15 @@ def load_config():
     config_path = os.path.join(SCRIPT_DIR, "../config.json")
 
     default_config = {
-        "API_TOKEN": "PASTE_YOUR_GITHUB_PAT_HERE",
-        "GITHUB_ORG": "owner",
-        "GITHUB_USERNAME": "your-github-username",
+        "BB_USERNAME": "you@example.com",
+        "BB_APP_PASSWORD": "PASTE_YOUR_BITBUCKET_API_TOKEN_HERE",
+        "BB_WORKSPACE": "your-workspace",
         "LANGUAGE": "fi",
         "NOTIFICATION_WINDOW_TITLE": "TODAYTASKS",
         "BROWSER_COMMAND": ["/usr/bin/google-chrome", "--profile-directory=Profile 1", "--new-window"],
         "JIRA_URL": "https://YOUR_ORG.atlassian.net",
         "JIRA_SESSION_FILE": "jira_session.pkl",
         "CHROME_DRIVER_PATH": "path/to/your/chromedriver",
-        "TRELLO_URL": "https://trello.com",
-        "TRELLO_SESSION_FILE": "trello_session.pkl",
         "CALENDAR_CSV": "https://docs.google.com/spreadsheets/d/e/YOUR_EXPORTED_CALENDAR_CSV_HERE/pub?gid=0&single=true&output=csv",
         "WEB_MONITORING": {
             "ENABLED": False,
@@ -35,7 +33,8 @@ def load_config():
             "ENABLED": True,
             "HOURLY_CHECKIN_ENABLED": True,
             "CHECKIN_INTERVAL_MINUTES": 60
-        }
+        },
+        "POLL_EXT_SERVICES_INTERVAL_MINUTES": 2
     }
     try:
         with open(config_path, 'r', encoding='utf-8') as f:
